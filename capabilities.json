@@ -1,0 +1,52 @@
+{
+  "dataRoles": [
+    {
+      "name": "fields",
+      "displayName": "Fields (dimensions, dates and categories)",
+      "kind": "Grouping"
+    },
+    {
+      "name": "measures",
+      "displayName": "Measures and KPIs",
+      "kind": "Measure"
+    }
+  ],
+  "dataViewMappings": [
+    {
+      "table": {
+        "rows": {
+          "select": [
+            {
+              "for": {
+                "in": "fields"
+              }
+            },
+            {
+              "for": {
+                "in": "measures"
+              }
+            }
+          ],
+          "dataReductionAlgorithm": {
+            "window": {
+              "count": 30000
+            }
+          }
+        }
+      }
+    }
+  ],
+  "objects": {
+    "state": {
+      "displayName": "Conversation state",
+      "properties": {
+        "conversation": {
+          "displayName": "Saved conversation",
+          "type": { "text": true }
+        }
+      }
+    }
+  },
+  "privileges": [],
+  "supportsEmptyDataView": true
+}

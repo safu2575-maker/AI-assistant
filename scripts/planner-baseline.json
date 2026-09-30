@@ -1,0 +1,1239 @@
+{
+  "passed": false,
+  "total": 29,
+  "passedCount": 17,
+  "failedCount": 12,
+  "results": [
+    {
+      "question": "top tenants by Sum of Area",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Tenant Name"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "filters": [],
+        "rankDirection": "top",
+        "reasons": [
+          "measures",
+          "fields",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "top",
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "show Sum of Area of Assigned Sales Category",
+      "passed": true,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.88,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Sales Category"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "Sum of Area by Assigned Group",
+      "passed": true,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.88,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Group"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Group"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Group"
+        ],
+        "columns": [],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "Show sum of area of assigned group, assigned tenant name and unit as columns and assigned sales category as rows",
+      "passed": false,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.94,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [
+          "Assigned Group"
+        ],
+        "fields": [
+          "Assigned Group",
+          "Assigned Tenant Name",
+          "Unit",
+          "Assigned Sales Category"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields",
+          "explicit_axes"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [
+          "Assigned Group",
+          "Assigned Tenant Name",
+          "Unit"
+        ],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "columns",
+          "expected": [
+            "Assigned Group",
+            "Assigned Tenant Name",
+            "Unit"
+          ],
+          "actual": [
+            "Assigned Group"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "Show sum of area of assigned group and assigned tenant name as rows and assigned sales category and assigned tenant name as columns",
+      "passed": false,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.94,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Group",
+          "Assigned Tenant Name"
+        ],
+        "columns": [
+          "Assigned Sales Category"
+        ],
+        "fields": [
+          "Assigned Group",
+          "Assigned Tenant Name",
+          "Assigned Sales Category"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields",
+          "explicit_axes"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Group",
+          "Assigned Tenant Name"
+        ],
+        "columns": [
+          "Assigned Sales Category",
+          "Assigned Tenant Name"
+        ],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "columns",
+          "expected": [
+            "Assigned Sales Category",
+            "Assigned Tenant Name"
+          ],
+          "actual": [
+            "Assigned Sales Category"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "Show sum of area of assigned group as columns and assigned sales category as rows",
+      "passed": true,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.94,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [
+          "Assigned Group"
+        ],
+        "fields": [
+          "Assigned Group",
+          "Assigned Sales Category"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields",
+          "explicit_axes"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [
+          "Assigned Group"
+        ],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "Show sum of area of assigned group as rows and assigned sales category as columns",
+      "passed": true,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.94,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Group"
+        ],
+        "columns": [
+          "Assigned Sales Category"
+        ],
+        "fields": [
+          "Assigned Group",
+          "Assigned Sales Category"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields",
+          "explicit_axes"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Group"
+        ],
+        "columns": [
+          "Assigned Sales Category"
+        ],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "show sum of area of Al Futtaim Retail in bar chart",
+      "passed": true,
+      "actual": {
+        "intent": "chart",
+        "confidence": 0.92,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [],
+        "columns": [],
+        "fields": [],
+        "filters": [
+          "Al Futtaim Retail"
+        ],
+        "chartType": "bar",
+        "reasons": [
+          "measures",
+          "filters"
+        ]
+      },
+      "expected": {
+        "intent": "chart",
+        "chartType": "bar",
+        "measures": [
+          "Sum of Area"
+        ],
+        "filters": [
+          "Al Futtaim Retail"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "show sum of area of al futtaim retail in table",
+      "passed": false,
+      "actual": {
+        "intent": "lookup",
+        "confidence": 0.88,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [],
+        "columns": [],
+        "fields": [],
+        "filters": [
+          "Al Futtaim Retail"
+        ],
+        "chartType": "table",
+        "reasons": [
+          "measures",
+          "filters"
+        ]
+      },
+      "expected": {
+        "intent": "chart",
+        "chartType": "table",
+        "measures": [
+          "Sum of Area"
+        ],
+        "filters": [
+          "Al Futtaim Retail"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "intent",
+          "expected": [
+            "chart"
+          ],
+          "actual": [
+            "lookup"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "show Sum of Area for Department Store as rows and Al Futtaim Retail as columns",
+      "passed": false,
+      "actual": {
+        "intent": "list",
+        "confidence": 0.94,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Group",
+          "Assigned Tenant Name"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Group"
+        ],
+        "filters": [
+          "Department Store",
+          "Al Futtaim Retail"
+        ],
+        "reasons": [
+          "measures",
+          "fields",
+          "filters",
+          "explicit_axes"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [
+          "Assigned Group"
+        ],
+        "measures": [
+          "Sum of Area"
+        ],
+        "filters": [
+          "Department Store",
+          "Al Futtaim Retail"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "intent",
+          "expected": [
+            "matrix"
+          ],
+          "actual": [
+            "list"
+          ]
+        },
+        {
+          "property": "rows",
+          "expected": [
+            "Assigned Sales Category"
+          ],
+          "actual": [
+            "Assigned Group",
+            "Assigned Tenant Name"
+          ]
+        },
+        {
+          "property": "columns",
+          "expected": [
+            "Assigned Group"
+          ],
+          "actual": []
+        }
+      ]
+    },
+    {
+      "question": "top assigned sales category by sum of area",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Sales Category"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Sales Category"
+        ],
+        "filters": [],
+        "rankDirection": "top",
+        "reasons": [
+          "measures",
+          "fields",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "top",
+        "fields": [
+          "Assigned Sales Category"
+        ],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "top Assigned Tenant Name by Sum of Area",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Tenant Name"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "filters": [],
+        "rankDirection": "top",
+        "reasons": [
+          "measures",
+          "fields",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "top",
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "measures": [
+          "Sum of Area"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "Show OCR for Zara as rows and regions as columns",
+      "passed": false,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.94,
+        "measures": [
+          "OCR"
+        ],
+        "rows": [
+          "Assigned Group"
+        ],
+        "columns": [
+          "Zone"
+        ],
+        "fields": [
+          "Zone"
+        ],
+        "filters": [
+          "Zara"
+        ],
+        "reasons": [
+          "measures",
+          "fields",
+          "filters",
+          "explicit_axes"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Tenant Name"
+        ],
+        "columns": [
+          "Zone"
+        ],
+        "measures": [
+          "OCR"
+        ],
+        "filters": [
+          "Zara"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "rows",
+          "expected": [
+            "Assigned Tenant Name"
+          ],
+          "actual": [
+            "Assigned Group"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "Show OCR for sales category and tenant as rows and regions as columns",
+      "passed": false,
+      "actual": {
+        "intent": "list",
+        "confidence": 0.94,
+        "measures": [
+          "OCR"
+        ],
+        "rows": [
+          "Assigned Sales Category",
+          "Assigned Tenant Name"
+        ],
+        "columns": [
+          "Zone"
+        ],
+        "fields": [
+          "Assigned Sales Category"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields",
+          "explicit_axes"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Sales Category",
+          "Assigned Tenant Name"
+        ],
+        "columns": [
+          "Zone"
+        ],
+        "measures": [
+          "OCR"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "intent",
+          "expected": [
+            "matrix"
+          ],
+          "actual": [
+            "list"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "top Assigned Sales Category by Sum of Area in Zone 3",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Sales Category",
+          "Zone"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Sales Category"
+        ],
+        "filters": [
+          "Zone 3"
+        ],
+        "rankDirection": "top",
+        "reasons": [
+          "measures",
+          "fields",
+          "filters",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "top",
+        "fields": [
+          "Assigned Sales Category"
+        ],
+        "measures": [
+          "Sum of Area"
+        ],
+        "filters": [
+          "Zone 3"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "bottom Assigned Group by rent/sqm",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Rent/Sqm"
+        ],
+        "rows": [
+          "Assigned Group"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Group"
+        ],
+        "filters": [],
+        "rankDirection": "bottom",
+        "reasons": [
+          "measures",
+          "fields",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "bottom",
+        "fields": [
+          "Assigned Group"
+        ],
+        "measures": [
+          "Rent/Sqm"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "top tenants by Sum of Area in Department Store under Al Futtaim Retail",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [
+          "Assigned Tenant Name",
+          "Assigned Group"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "filters": [
+          "Department Store",
+          "Al Futtaim Retail"
+        ],
+        "rankDirection": "top",
+        "reasons": [
+          "measures",
+          "fields",
+          "filters",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "top",
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "measures": [
+          "Sum of Area"
+        ],
+        "filters": [
+          "Department Store",
+          "Al Futtaim Retail"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "top tenants by Sales/Sqm in Food and Beverage category",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Sales/Sqm"
+        ],
+        "rows": [
+          "Assigned Tenant Name",
+          "Assigned Sales Category"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "filters": [
+          "Food and Beverage"
+        ],
+        "rankDirection": "top",
+        "reasons": [
+          "measures",
+          "fields",
+          "filters",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "top",
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "measures": [
+          "Sales/Sqm"
+        ],
+        "filters": [
+          "Food and Beverage"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "how many units are there in zone 3",
+      "passed": true,
+      "actual": {
+        "intent": "count",
+        "confidence": 0.92,
+        "measures": [
+          "Units"
+        ],
+        "rows": [
+          "Unit",
+          "Zone"
+        ],
+        "columns": [],
+        "fields": [
+          "Unit"
+        ],
+        "filters": [
+          "Zone 3"
+        ],
+        "reasons": [
+          "measures",
+          "fields",
+          "filters",
+          "count_words"
+        ]
+      },
+      "expected": {
+        "intent": "count",
+        "fields": [
+          "Unit"
+        ],
+        "filters": [
+          "Zone 3"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "how many zones are there in first floor",
+      "passed": false,
+      "actual": {
+        "intent": "count",
+        "confidence": 0.92,
+        "measures": [],
+        "rows": [
+          "Zone",
+          "Floor"
+        ],
+        "columns": [],
+        "fields": [
+          "Zone"
+        ],
+        "filters": [],
+        "reasons": [
+          "fields",
+          "count_words"
+        ]
+      },
+      "expected": {
+        "intent": "count",
+        "fields": [
+          "Zone"
+        ],
+        "filters": [
+          "First"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "filters",
+          "expected": [
+            "First"
+          ],
+          "actual": []
+        }
+      ]
+    },
+    {
+      "question": "How many units unzoned in ground floor",
+      "passed": false,
+      "actual": {
+        "intent": "count",
+        "confidence": 0.92,
+        "measures": [
+          "Units"
+        ],
+        "rows": [
+          "Unit",
+          "Floor"
+        ],
+        "columns": [],
+        "fields": [
+          "Unit"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields",
+          "count_words"
+        ]
+      },
+      "expected": {
+        "intent": "count",
+        "fields": [
+          "Unit"
+        ],
+        "filters": [
+          "unzoned",
+          "Ground"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "filters",
+          "expected": [
+            "unzoned",
+            "Ground"
+          ],
+          "actual": []
+        }
+      ]
+    },
+    {
+      "question": "List unzoned units",
+      "passed": false,
+      "actual": {
+        "intent": "list",
+        "confidence": 0.88,
+        "measures": [
+          "Units"
+        ],
+        "rows": [
+          "Unit"
+        ],
+        "columns": [],
+        "fields": [
+          "Unit"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields"
+        ]
+      },
+      "expected": {
+        "intent": "list",
+        "fields": [
+          "Unit"
+        ],
+        "filters": [
+          "unzoned"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "filters",
+          "expected": [
+            "unzoned"
+          ],
+          "actual": []
+        }
+      ]
+    },
+    {
+      "question": "list unzoned units in 2nd floor",
+      "passed": false,
+      "actual": {
+        "intent": "list",
+        "confidence": 0.88,
+        "measures": [
+          "Units"
+        ],
+        "rows": [
+          "Unit",
+          "Floor"
+        ],
+        "columns": [],
+        "fields": [
+          "Unit"
+        ],
+        "filters": [
+          "2nd"
+        ],
+        "reasons": [
+          "measures",
+          "fields",
+          "filters"
+        ]
+      },
+      "expected": {
+        "intent": "list",
+        "fields": [
+          "Unit"
+        ],
+        "filters": [
+          "unzoned",
+          "2nd"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "filters",
+          "expected": [
+            "unzoned",
+            "2nd"
+          ],
+          "actual": [
+            "2nd"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "what is the sales/sqm and rent/sqm of novamart",
+      "passed": true,
+      "actual": {
+        "intent": "lookup",
+        "confidence": 0.88,
+        "measures": [
+          "Sales/Sqm",
+          "Rent/Sqm"
+        ],
+        "rows": [],
+        "columns": [],
+        "fields": [],
+        "filters": [
+          "NovaMart"
+        ],
+        "reasons": [
+          "measures",
+          "filters"
+        ]
+      },
+      "expected": {
+        "intent": "lookup",
+        "measures": [
+          "Sales/Sqm",
+          "Rent/Sqm"
+        ],
+        "filters": [
+          "novamart"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "what is the sales/sqm and rent/sqm of novamart and urban mart",
+      "passed": false,
+      "actual": {
+        "intent": "lookup",
+        "confidence": 0.88,
+        "measures": [
+          "Sales/Sqm",
+          "Rent/Sqm"
+        ],
+        "rows": [],
+        "columns": [],
+        "fields": [],
+        "filters": [
+          "NovaMart",
+          "Urban Mart"
+        ],
+        "reasons": [
+          "measures",
+          "filters"
+        ]
+      },
+      "expected": {
+        "intent": "compare",
+        "measures": [
+          "Sales/Sqm",
+          "Rent/Sqm"
+        ],
+        "filters": [
+          "novamart",
+          "urban mart"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "intent",
+          "expected": [
+            "compare"
+          ],
+          "actual": [
+            "lookup"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "compare Zara with Mango by Sum of Area",
+      "passed": true,
+      "actual": {
+        "intent": "compare",
+        "confidence": 0.88,
+        "measures": [
+          "Sum of Area"
+        ],
+        "rows": [],
+        "columns": [],
+        "fields": [],
+        "filters": [
+          "Zara",
+          "Mango"
+        ],
+        "reasons": [
+          "measures",
+          "filters"
+        ]
+      },
+      "expected": {
+        "intent": "compare",
+        "measures": [
+          "Sum of Area"
+        ],
+        "filters": [
+          "Zara",
+          "Mango"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "which zone have highest sales/sqm",
+      "passed": true,
+      "actual": {
+        "intent": "rank",
+        "confidence": 0.9,
+        "measures": [
+          "Sales/Sqm"
+        ],
+        "rows": [
+          "Zone"
+        ],
+        "columns": [],
+        "fields": [
+          "Zone"
+        ],
+        "filters": [],
+        "rankDirection": "top",
+        "reasons": [
+          "measures",
+          "fields",
+          "rank_words"
+        ]
+      },
+      "expected": {
+        "intent": "rank",
+        "rankDirection": "top",
+        "fields": [
+          "Zone"
+        ],
+        "measures": [
+          "Sales/Sqm"
+        ]
+      },
+      "mismatches": []
+    },
+    {
+      "question": "show Sales/Sqm in columns and Assigned Tenant as matrix",
+      "passed": false,
+      "actual": {
+        "intent": "list",
+        "confidence": 0.88,
+        "measures": [
+          "Sales/Sqm"
+        ],
+        "rows": [
+          "Assigned Tenant Name"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Tenant Name"
+        ],
+        "filters": [],
+        "chartType": "matrix",
+        "reasons": [
+          "measures",
+          "fields"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Tenant Name"
+        ],
+        "columns": [],
+        "measures": [
+          "Sales/Sqm"
+        ]
+      },
+      "mismatches": [
+        {
+          "property": "intent",
+          "expected": [
+            "matrix"
+          ],
+          "actual": [
+            "list"
+          ]
+        }
+      ]
+    },
+    {
+      "question": "show Sales/Sqm with Assigned Group and Assigned Tenant",
+      "passed": true,
+      "actual": {
+        "intent": "matrix",
+        "confidence": 0.88,
+        "measures": [
+          "Sales/Sqm"
+        ],
+        "rows": [
+          "Assigned Group",
+          "Assigned Tenant Name"
+        ],
+        "columns": [],
+        "fields": [
+          "Assigned Group",
+          "Assigned Tenant Name"
+        ],
+        "filters": [],
+        "reasons": [
+          "measures",
+          "fields"
+        ]
+      },
+      "expected": {
+        "intent": "matrix",
+        "rows": [
+          "Assigned Group",
+          "Assigned Tenant Name"
+        ],
+        "columns": [],
+        "measures": [
+          "Sales/Sqm"
+        ]
+      },
+      "mismatches": []
+    }
+  ]
+}

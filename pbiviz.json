@@ -1,0 +1,26 @@
+{
+  "visual": {
+    "name": "askBICSAssistant",
+    "displayName": "askBICS Assistant",
+    "guid": "askBICSAssistantBBA47C69F49C41FB89A0801541EF7FD9",
+    "visualClassName": "Visual",
+    "version": "2.1.1.0",
+    "description": "Global natural-language Q&A for any Power BI dataset",
+    "supportUrl": "https://infobics.com",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.11.0",
+  "author": {
+    "name": "InfoBICS",
+    "email": "support@infobics.com"
+  },
+  "assets": {
+    "icon": "assets/icon.png"
+  },
+  "externalJS": null,
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": null,
+  "stringResources": [],
+  "version": "2.1.0.0"
+}

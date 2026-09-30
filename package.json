@@ -1,0 +1,28 @@
+{
+  "name": "askbics-assistant",
+  "description": "Global natural-language Q&A Power BI visual",
+  "version": "2.1.1.0",
+  "repository": {
+    "type": "default_template_value",
+    "url": "default_template_value"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "scripts": {
+    "pbiviz": "pbiviz",
+    "start": "pbiviz start",
+    "package": "pbiviz package",
+    "lint": "npx eslint .",
+    "build": "tsc -p . --noEmit",
+    "test": "tsc -p . --module commonjs --outDir .tmp/test && node scripts/test.cjs"
+  },
+  "dependencies": {
+    "powerbi-visuals-api": "5.11.0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.8.0",
+    "eslint": "^9.11.1",
+    "eslint-plugin-powerbi-visuals": "^1.0.0",
+    "powerbi-visuals-tools": "^6.1.3",
+    "typescript": "5.5.4"
+  }
+}

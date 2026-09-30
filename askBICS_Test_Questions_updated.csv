@@ -1,0 +1,70 @@
+Test ID,Category,Question,Expected output,Validation
+Q001,KPI,Show total Sales,KPI,Displays total Sum of Sales
+Q002,KPI,Show total Rent,KPI,Displays total Sum of Rent
+Q003,KPI,Show average Profit,KPI,Displays average Profit
+Q004,KPI,Show minimum Cost,KPI,Displays minimum Cost
+Q005,KPI,Show maximum Sales,KPI,Displays maximum Sales
+Q006,Filter,Show total Sales for Tech Hub,KPI,Filters the result to Tech Hub
+Q007,Filter,Show total Sales for Bean Street,KPI,Filters the result to Bean Street
+Q008,Filter,Show total Sales in Riyadh,KPI,Filters the result to Riyadh
+Q009,Filter,Show total Sales in September,KPI,Filters the result to September
+Q010,Comparison,Compare Sales and Rent for Tech Hub and Bean Street in a table,Table,Shows both tenants plus a Total row
+Q011,Comparison,Show Sales Target and Profit for Tech Hub Bean Street and Digital World in a table,Table,Shows three measures for three tenants plus Total
+Q012,Comparison,Compare Sales and Cost by City in a table,Table,Shows one row per city with two measures
+Q013,Comparison,Show Sales and Profit by City and Assigned Sales Category in a table,Table,Shows two separate grouping columns
+Q014,Comparison,Show Sales Cost and Profit by City Assigned Sales Category and Month in a table,Table,Shows three grouping fields and three measures
+Q015,Ranking,Show top 5 Assigned Tenant Name by Sales,Bar chart,Shows five highest tenants
+Q016,Ranking,Show bottom 5 Assigned Tenant Name by Profit,Bar chart,Shows five lowest tenants
+Q017,Ranking,Which Assigned Sales Category has the highest Sales,Bar chart,Highest category appears first
+Q018,Ranking,Which City has the lowest Profit,Bar chart,Lowest city appears first
+Q019,Table,Show Sales by Assigned Tenant Name in a table,Table,Interactive table with Total row
+Q020,Table,Show Sales and Target by Assigned Tenant Name in a table,Table,Variance control is enabled
+Q021,Table,Show Sales and Rent by City and Month in a table,Table,Sort filter bars and variance controls work
+Q022,Bar chart,Show Sales by Assigned Tenant Name as a bar chart,Horizontal bar chart,Categories are on the vertical axis
+Q023,Bar chart,Show Sales and Rent for Tech Hub and Bean Street as a bar chart,Grouped horizontal bar chart,Each tenant has separate Sales and Rent bars
+Q024,Column chart,Show Sales by Assigned Sales Category as a column chart,Vertical column chart,Categories are on the horizontal axis
+Q025,Column chart,Show Sales and Target by City as a column chart,Grouped column chart,Legend identifies both measures
+Q026,Line chart,Show Sales by Month as a line chart,Line chart,Month labels and data points are visible
+Q027,Line chart,Show Sales and Profit by Month as a line chart,Multi-series line chart,Legend and tooltips identify each measure
+Q028,Area chart,Show Sales by Month as an area chart,Area chart,Filled area and line are visible
+Q029,Pie chart,Show Sales by Assigned Sales Category as a pie chart,Pie chart,Slices and percentage labels are visible
+Q030,Donut chart,Show Sales by City as a donut chart,Donut chart,Legend shows city value and percentage
+Q031,Stacked bar,Show Sales and Cost by City as a stacked bar chart,Stacked horizontal bar chart,Sales and Cost are stacked by city
+Q032,Stacked column,Show Sales and Profit by Month as a stacked column chart,Stacked vertical column chart,Measures are stacked by month
+Q033,Combo chart,Show Sales and Target by Month as a combo chart,Combo chart,First measure is columns and second is a line
+Q034,Waterfall,Show Profit by Month as a waterfall chart,Waterfall chart,Positive and negative changes use different colors
+Q035,Scatter,Show correlation between Sales and Rent by Assigned Tenant Name,Scatter chart,X and Y axes use Sales and Rent
+Q036,Treemap,Show share of Sales by Assigned Sales Category,Treemap,Tile size represents Sales share
+Q037,Funnel,Show Sales by Assigned Sales Category as a funnel chart,Funnel chart,Stages are sized by Sales
+Q038,Gauge,Show Sales against Target as a gauge,Gauge,Shows Sales progress against Target
+Q039,Bullet,Show Sales and Target by Assigned Tenant Name as a bullet chart,Bullet chart,Sales bars and Target markers are visible
+Q040,Multi-field chart,Show Sales by City and Assigned Sales Category as a column chart,Column chart,Axis labels combine City and Category
+Q041,Multi-field chart,Show Sales and Profit by City and Month as a stacked bar chart,Stacked bar chart,Combined field labels and measure legend are visible
+Q042,Negative values,Show Profit by Assigned Tenant Name as a column chart,Column chart,Negative values appear below the zero baseline
+Q043,Large categories,Show Sales by Assigned Tenant Name as a column chart,Top-N column chart,Automatically limits large results to the top 15
+Q044,Chart controls,Show Sales by City as a bar chart,Interactive chart,Chart selector changes type without a new question
+Q045,Chart controls,Show Sales by Month as a line chart,Interactive chart,Labels button hides and shows data labels
+Q046,Autocomplete,Show Sal,Autocomplete,Suggests Sum of Sales and Tab accepts it
+Q047,Autocomplete,Show Sales by Ass,Autocomplete,Suggests matching fields and arrow keys navigate
+Q048,Edit question,Show Sales by City as a chart,Editable question,Hovering the question reveals the edit icon
+Q049,Saved Reports,Show Sales and Target by City in a table,Savable answer,Save to reports adds the answer to Saved Reports
+Q050,Saved Reports,Show Sales and Profit by Month as a combo chart,Savable answer,Saved report reopens and recalculates from current data
+Q051,Persistence,Show total Sales for Tech Hub,Persistent answer,Question and answer restore after changing pages
+Q052,Focus mode,Show Sales and Rent by Assigned Tenant Name as a column chart,Responsive chart,Chart remains complete in and after Focus mode
+Q053,Table controls,Show Sales and Target by Assigned Tenant Name in a table,Interactive table,Sort each measure ascending and descending
+Q054,Table controls,Show Sales and Target by Assigned Tenant Name in a table,Interactive table,Column filters reduce visible rows
+Q055,Table controls,Show Sales and Target by Assigned Tenant Name in a table,Interactive table,Bars on and Bars off toggle works
+Q056,Table controls,Show Sales and Target by Assigned Tenant Name in a table,Interactive table,Variance shows a small green upward percentage beside Sales only when Sales exceeds Target
+Q057,Accessibility,Show Sales by City as a bar chart,Keyboard-accessible chart,Tab focuses chart marks and Enter selects data
+Q058,Accessibility,Show Sales by City in a table,Keyboard-accessible table,Tab focuses rows and Enter filters the report
+Q059,Matrix,Show Rent by Assigned Group and Assigned Sales Category in a matrix,Hierarchy matrix,Shows Assigned Group as parent rows and Assigned Sales Category as expandable child rows
+Q060,Matrix,Show Area by Assigned Group and Assigned Tenant Name in a matrix,Hierarchy matrix,Orders hierarchy from lower to higher cardinality and provides expand and collapse controls
+Q061,Matrix,Matrix; rows: Assigned Sales Category > Assigned Tenant Name; columns: ; values: Sum of Sales,Hierarchy matrix,Shows a compact parent-child matrix with Sum of Sales and a Grand Total
+Q062,Matrix columns,Matrix; rows: Assigned Tenant Name; columns: Assigned Sales Category; values: Sum of Sales,Matrix with columns,Shows category columns only when the category cardinality is within the configured maximum
+Q063,Table override,Show Sales and Rent by Assigned Group and Assigned Sales Category in a table,Table,Explicit table wording overrides automatic cardinality selection
+Q064,Matrix override,Show Sales and Rent by Assigned Group and Assigned Sales Category in a matrix,Hierarchy matrix,Explicit matrix wording overrides automatic table selection
+Q065,Cardinality,Show Sales by City and Assigned Tenant Name,Automatic matrix,Chooses a hierarchy matrix when one field has substantially lower cardinality
+Q066,Cardinality,Show Sales by Assigned Tenant Name and Record ID,Automatic table,Uses a table when both fields have high cardinality
+Q067,Matrix filter,Show Sales by Assigned Tenant Name for Riyadh,Filtered table,Uses the single City value as a filter instead of adding it as a hierarchy level
+Q068,Matrix configuration,Show Sales and Rent by Assigned Group and Assigned Sales Category in a matrix,Editable matrix,Unticking Sum of Sales and applying leaves only Sum of Rent in the matrix
+Q069,Matrix settings,Show Sales by City and Assigned Tenant Name,Configurable layout,Changing the matrix threshold in Settings changes the automatic table or matrix decision
