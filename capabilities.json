@@ -13,30 +13,41 @@
   ],
   "dataViewMappings": [
     {
-      "table": {
-        "rows": {
-          "select": [
-            {
-              "for": {
-                "in": "fields"
-              }
-            },
-            {
-              "for": {
-                "in": "measures"
-              }
-            }
-          ],
+      "categorical": {
+        "categories": {
+          "for": {
+            "in": "fields"
+          },
           "dataReductionAlgorithm": {
             "window": {
               "count": 30000
             }
           }
+        },
+        "values": {
+          "select": [
+            {
+              "for": {
+                "in": "measures"
+              }
+            }
+          ]
         }
       }
     }
   ],
   "objects": {
+    "general": {
+      "displayName": "General",
+      "properties": {
+        "filter": {
+          "type": { "filter": true }
+        },
+        "selfFilter": {
+          "type": { "filter": { "selfFilter": false } }
+        }
+      }
+    },
     "state": {
       "displayName": "Conversation state",
       "properties": {
@@ -48,5 +59,8 @@
     }
   },
   "privileges": [],
-  "supportsEmptyDataView": true
+  "supportsHighlight": true,
+  "supportsMultiVisualSelection": true,
+  "supportsEmptyDataView": true,
+  "supportsSynchronizingFilterState": true
 }

@@ -4,9 +4,11 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "target": "es2022",
+    "module": "Node16",
     "sourceMap": true,
+    "rootDir": ".",
     "outDir": "./.tmp/build/",
-    "moduleResolution": "node",
+    "moduleResolution": "Node16",
     "declaration": true,
     "lib": [
       "es2022",
@@ -15,6 +17,7 @@
     "types": []
   },
   "files": [
-    "./src/visual.ts"
+    "./src/visual.ts",
+    "./src/styles.d.ts"
   ]
 }

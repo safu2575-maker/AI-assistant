@@ -14,6 +14,7 @@ export interface QnaMeasure {
     values: Array<number | null>;
     formatHint: "number" | "percentage" | "date";
     formatString?: string;
+    modelTotal?: number;
 }
 
 export interface QnaContext {
@@ -28,6 +29,8 @@ export interface QnaTable {
     columns: string[];
     rows: string[][];
     rowIndices: number[][];
+    cellIndices?: number[][][];
+    selectionFieldsByColumn?: string[][];
     matrix?: { levels: number[]; keys: string[]; parentKeys: Array<string | undefined>; hasChildren: boolean[]; rowHeader: string };
 }
 
@@ -39,6 +42,8 @@ export interface QnaLayoutSettings {
     cardinalityLowToHighHierarchy: boolean;
     autocompleteFields?: string[];
     autocompleteMeasures?: string[];
+    synonyms?: Record<string, string[]>;
+    synonymEnabled?: Record<string, boolean>;
 }
 
 export interface QnaChart {

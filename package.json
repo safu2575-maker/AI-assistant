@@ -13,9 +13,10 @@
     "package": "pbiviz package",
     "lint": "npx eslint .",
     "build": "tsc -p . --noEmit",
-    "test": "tsc -p . --module commonjs --outDir .tmp/test && node scripts/test.cjs"
+    "test": "tsc -p . --rootDir src --outDir .tmp/test && node scripts/test.cjs"
   },
   "dependencies": {
+    "powerbi-models": "^1.12.6",
     "powerbi-visuals-api": "5.11.0"
   },
   "devDependencies": {

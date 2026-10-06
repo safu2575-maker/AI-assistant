@@ -1,6 +1,25 @@
 import powerbi from "powerbi-visuals-api";
 import { QnaContext, QnaField, QnaMeasure } from "./qna/types";
 
+export function categoricalAsTable(categorical: powerbi.DataViewCategorical | undefined): powerbi.DataViewTable | undefined {
+    if (!categorical) return undefined;
+    const categories = categorical.categories || [];
+    const values = Array.from(categorical.values || []);
+    const columns = [...categories.map((column) => column.source), ...values.map((column) => column.source)];
+    if (!columns.length) return undefined;
+    const rowCount = Math.max(0, ...categories.map((column) => column.values.length), ...values.map((column) => column.values.length));
+    const rows: powerbi.DataViewTableRow[] = new Array(rowCount);
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+        const row: powerbi.DataViewTableRow = new Array(columns.length);
+        let columnIndex = 0;
+        for (const column of categories) row[columnIndex++] = column.values[rowIndex] ?? null;
+        for (const column of values) row[columnIndex++] = column.values[rowIndex] ?? null;
+        rows[rowIndex] = row;
+    }
+    const totals = columns.map((column) => column.aggregates?.subtotal ?? column.aggregates?.single ?? null);
+    return { columns, rows, totals };
+}
+
 export function formatPowerBiValue(value: number, formatString = "", formatHint: QnaMeasure["formatHint"] = "number", compact = false): string {
     if (!Number.isFinite(value)) return "—";
     if (formatHint === "date") return new Date(value).toLocaleDateString();
@@ -25,17 +44,33 @@ export function buildContext(table: powerbi.DataViewTable | undefined, selectedI
     const key = (column: powerbi.DataViewMetadataColumn): string => column.queryName || column.displayName;
     const text = (value: unknown): string => value == null ? "" : value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
     const fields: QnaField[] = fieldColumns.map(({ column, index }) => {
-        const values = rows.map((row) => text(row[index]) || "(Blank)");
+        const values = new Array<string>(rows.length);
         const groups = new Map<string, number[]>();
-        values.forEach((value, rowIndex) => { const indices = groups.get(value) || []; indices.push(rowIndex); groups.set(value, indices); });
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+            const value = text(rows[rowIndex][index]) || "(Blank)";
+            values[rowIndex] = value;
+            const indices = groups.get(value);
+            if (indices) indices.push(rowIndex);
+            else groups.set(value, [rowIndex]);
+        }
         return { key: key(column), name: column.displayName, values, uniqueValues: Array.from(groups, ([label, indices]) => ({ label, indices })) };
     });
-    const measures: QnaMeasure[] = measureColumns.map(({ column, index }) => ({
-        key: key(column), name: column.displayName,
-        values: rows.map((row) => { const value = row[index]; if (value == null) return null; if (column.type?.dateTime) { const time = new Date(value as any).getTime(); return Number.isFinite(time) ? time : null; } const number = Number(value); return Number.isFinite(number) ? number : null; }),
-        formatHint: column.type?.dateTime ? "date" : column.format?.includes("%") ? "percentage" : "number",
-        formatString: column.format
-    }));
+    const measures: QnaMeasure[] = measureColumns.map(({ column, index }) => {
+        const measureValues = new Array<number | null>(rows.length);
+        const isDate = !!column.type?.dateTime;
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+            const value = rows[rowIndex][index];
+            if (value == null) measureValues[rowIndex] = null;
+            else if (isDate) { const time = new Date(value as any).getTime(); measureValues[rowIndex] = Number.isFinite(time) ? time : null; }
+            else { const number = Number(value); measureValues[rowIndex] = Number.isFinite(number) ? number : null; }
+        }
+        return {
+            key: key(column), name: column.displayName, values: measureValues,
+            formatHint: isDate ? "date" : column.format?.includes("%") ? "percentage" : "number",
+            formatString: column.format,
+            modelTotal: table?.totals?.[index] != null && Number.isFinite(Number(table.totals[index])) ? Number(table.totals[index]) : undefined
+        };
+    });
     return {
         rowCount: rows.length, fields, measures, selectedIndices,
         formatValue: (measure, value) => {
