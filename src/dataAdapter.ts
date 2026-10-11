@@ -17,7 +17,20 @@ export function categoricalAsTable(categorical: powerbi.DataViewCategorical | un
         rows[rowIndex] = row;
     }
     const totals = columns.map((column) => column.aggregates?.subtotal ?? column.aggregates?.single ?? null);
-    return { columns, rows, totals };
+    // Blank totals are null at runtime, although the SDK excludes null here.
+    return { columns, rows, totals: totals as powerbi.DataViewTable["totals"] };
+}
+
+const numberFormatters = new Map<string, Intl.NumberFormat>();
+function numberFormatter(options: Intl.NumberFormatOptions): Intl.NumberFormat {
+    const key = JSON.stringify(options);
+    let formatter = numberFormatters.get(key);
+    if (!formatter) {
+        formatter = new Intl.NumberFormat(undefined, options);
+        if (numberFormatters.size >= 64) numberFormatters.delete(numberFormatters.keys().next().value!);
+        numberFormatters.set(key, formatter);
+    }
+    return formatter;
 }
 
 export function formatPowerBiValue(value: number, formatString = "", formatHint: QnaMeasure["formatHint"] = "number", compact = false): string {
@@ -31,7 +44,7 @@ export function formatPowerBiValue(value: number, formatString = "", formatHint:
     const scaled = percentage ? value * 100 : value;
     const prefix = positivePattern.slice(0, positivePattern.indexOf(placeholder)).replace(/"([^"]*)"/g, "$1").replace(/\\(.)/g, "$1").trim();
     const suffix = positivePattern.slice(positivePattern.indexOf(placeholder) + placeholder.length).replace(/"([^"]*)"/g, "$1").replace(/\\(.)/g, "$1").replace(/%/g, "").trim();
-    const formatted = scaled.toLocaleString(undefined, compact && !percentage ? { notation: "compact", maximumFractionDigits: Math.max(1, decimals) } : { useGrouping: !placeholder || placeholder.includes(","), minimumFractionDigits: requiredDecimals, maximumFractionDigits: decimals });
+    const formatted = numberFormatter(compact && !percentage ? { notation: "compact", maximumFractionDigits: Math.max(1, decimals) } : { useGrouping: !placeholder || placeholder.includes(","), minimumFractionDigits: requiredDecimals, maximumFractionDigits: decimals }).format(scaled);
     const signWrapped = value < 0 && String(formatString).split(";")[1]?.includes("(") ? `(${formatted.replace(/^-/, "")})` : formatted;
     return `${prefix}${signWrapped}${percentage ? "%" : suffix}`;
 }

@@ -26,11 +26,14 @@ export interface QnaContext {
 }
 
 export interface QnaTable {
+    backgroundFields?: string[];
     columns: string[];
     rows: string[][];
     rowIndices: number[][];
     cellIndices?: number[][][];
     selectionFieldsByColumn?: string[][];
+    hiddenColumns?: number[];
+    ytdColumns?: Array<{ sourceColumn: number; ytdColumn: number }>;
     matrix?: { levels: number[]; keys: string[]; parentKeys: Array<string | undefined>; hasChildren: boolean[]; rowHeader: string };
 }
 
@@ -47,6 +50,7 @@ export interface QnaLayoutSettings {
 }
 
 export interface QnaChart {
+    backgroundFields?: string[];
     type: QnaChartType;
     title: string;
     labels: string[];

@@ -43,6 +43,27 @@
         "filter": {
           "type": { "filter": true }
         },
+        "filter2": {
+          "type": { "filter": true }
+        },
+        "filter3": {
+          "type": { "filter": true }
+        },
+        "filter4": {
+          "type": { "filter": true }
+        },
+        "filter5": {
+          "type": { "filter": true }
+        },
+        "filter6": {
+          "type": { "filter": true }
+        },
+        "filter7": {
+          "type": { "filter": true }
+        },
+        "filter8": {
+          "type": { "filter": true }
+        },
         "selfFilter": {
           "type": { "filter": { "selfFilter": false } }
         }

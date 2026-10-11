@@ -4,11 +4,22 @@ const clean = (value: unknown): string => String(value ?? "").replace(/\s+/g, " 
 const norm = (value: unknown): string => clean(value).toLowerCase().replace(/[^a-z0-9%]+/g, " ").replace(/\s+/g, " ").trim();
 const measureAliases = (name: string): string[] => {
     const full = norm(name);
-    const short = full.replace(/^(?:sum|total|average|avg|minimum|min|maximum|max|count|distinct count)\s+of\s+/, "").trim();
-    return Array.from(new Set([full, short].filter(Boolean)));
+    const short = full.replace(/^(?:sum|total|average|avg|minimum|min|maximum|max|count|distinct count)\s+(?:of\s+)?/, "").trim();
+    const semantic: string[] = [];
+    if (/\bactual movement\b/.test(full)) semantic.push("cost", "actual cost", "expense", "actual expense");
+    return Array.from(new Set([full, short, ...semantic].filter(Boolean)));
 };
 
 export class GlobalQnaEngine {
+    private answerFilterFields = new Set<string>();
+
+    private attachAnswerContext(response: QnaResponse): QnaResponse {
+        const inheritedFields = this.context.selectedIndices.length ? this.context.fields.filter((field) => this.selectedContextFieldKeys.has(norm(field.name))).map((field) => field.name) : [];
+        const backgroundFields = Array.from(new Set([...this.answerFilterFields, ...inheritedFields]));
+        if (response.table) response.table.backgroundFields = backgroundFields;
+        if (response.chart) response.chart.backgroundFields = backgroundFields;
+        return response;
+    }
     private layoutSettings: QnaLayoutSettings = { conversationMode: "history", cardinalityFallbackEnabled: true, cardinalityMatrixThresholdPct: 25, cardinalityMaxColumnValues: 5, cardinalityLowToHighHierarchy: true };
     private dashboardDateRange: { start: number; end: number } | null = null;
     private termCandidates: Array<{ label: string; lower: string; kind: "measure" | "field" | "value" }> | null = null;
@@ -18,13 +29,15 @@ export class GlobalQnaEngine {
     private responseCache = new Map<string, QnaResponse>();
     private selectedIndexSet = new Set<number>();
     private selectedFieldKeys = new Set<string>();
+    private selectedContextFieldKeys = new Set<string>();
     constructor(private context: QnaContext) { this.selectedIndexSet = new Set(context.selectedIndices); this.allIndices = Array.from({ length: context.rowCount }, (_, index) => index); }
 
     updateContext(context: QnaContext): void { this.context = context; this.selectedIndexSet = new Set(context.selectedIndices); this.allIndices = Array.from({ length: context.rowCount }, (_, index) => index); this.invalidateCaches(); }
-    updateSelection(selectedIndices: number[], activeFieldNames: string[] = []): void {
+    updateSelection(selectedIndices: number[], activeFieldNames: string[] = [], backgroundFields: string[] = []): void {
         this.context.selectedIndices = selectedIndices;
         this.selectedIndexSet = new Set(selectedIndices);
         this.selectedFieldKeys = new Set(activeFieldNames.map(norm).filter(Boolean));
+        this.selectedContextFieldKeys = new Set([...activeFieldNames, ...backgroundFields].map(norm).filter(Boolean));
         this.responseCache.clear();
     }
 
@@ -47,9 +60,51 @@ export class GlobalQnaEngine {
         return { fields: this.context.fields.map((field) => field.name), measures: this.context.measures.map((measure) => measure.name) };
     }
 
+    fieldFilterValues(name: string, search = ""): string[] {
+        const field = this.context.fields.find((item) => item.name === name);
+        const result: string[] = [];
+        for (const item of field?.uniqueValues || []) {
+            if (item.label.toLocaleLowerCase().includes(search.toLocaleLowerCase())) result.push(item.label);
+            if (result.length >= 200) break;
+        }
+        return result;
+    }
+
+    answerFilters(question: string): Array<{ field: string; values: string[] }> {
+        const parsed = this.resolveExplicitFilters(question).values;
+        const grouped = new Map<string, Set<string>>();
+        for (const item of parsed) { const values = grouped.get(item.field.name) || new Set<string>(); values.add(item.label); grouped.set(item.field.name, values); }
+        return Array.from(grouped, ([field, values]) => ({ field, values: [...values] }));
+    }
+
+    withAnswerFilters(question: string, filters: Array<{ field: string; values: string[] }>): string {
+        const base = this.resolveExplicitFilters(question).question.trim();
+        return filters.length ? `${base}; answerFilters: ${encodeURIComponent(JSON.stringify(filters))}` : base;
+    }
+
     getLayoutSettings(): QnaLayoutSettings { return { ...this.layoutSettings, autocompleteFields: this.layoutSettings.autocompleteFields?.slice(), autocompleteMeasures: this.layoutSettings.autocompleteMeasures?.slice(), synonyms: Object.fromEntries(Object.entries(this.layoutSettings.synonyms || {}).map(([key, values]) => [key, values.slice()])), synonymEnabled: { ...(this.layoutSettings.synonymEnabled || {}) } }; }
     measureNamesForQuestion(question: string): string[] { return this.resolveMeasures(norm(question)).map((measure) => measure.name); }
-    answerIgnoringSelection(question: string): QnaResponse { const selected = this.context.selectedIndices; this.context.selectedIndices = []; try { return this.computeAnswer(question); } finally { this.context.selectedIndices = selected; } }
+    answerIgnoringSelection(question: string): QnaResponse {
+        const selected = this.context.selectedIndices;
+        const previousFields = this.answerFilterFields;
+        this.context.selectedIndices = [];
+        this.answerFilterFields = new Set<string>();
+        try { return this.applyQuestionSynonyms(this.attachAnswerContext(this.computeAnswer(question)), question); }
+        finally { this.context.selectedIndices = selected; this.answerFilterFields = previousFields; }
+    }
+
+    backgroundFilterSummary(data: { backgroundFields?: string[]; rowIndices: number[][] }): Array<{ field: string; values: string[] }> {
+        if (!data.backgroundFields?.length) return [];
+        const indices = new Set<number>();
+        for (const row of data.rowIndices) for (const index of row) indices.add(index);
+        return (data.backgroundFields || []).flatMap((name) => {
+            const field = this.context.fields.find((item) => item.name === name);
+            if (!field) return [];
+            const values = new Set<string>();
+            for (const index of indices) values.add(field.values[index]);
+            return values.size ? [{ field: name, values: [...values] }] : [];
+        });
+    }
     setLayoutSettings(settings: Partial<QnaLayoutSettings>): void { this.layoutSettings = { ...this.layoutSettings, ...settings, autocompleteFields: settings.autocompleteFields?.slice() ?? this.layoutSettings.autocompleteFields, autocompleteMeasures: settings.autocompleteMeasures?.slice() ?? this.layoutSettings.autocompleteMeasures, synonyms: settings.synonyms ? Object.fromEntries(Object.entries(settings.synonyms).map(([key, values]) => [key, values.slice()])) : this.layoutSettings.synonyms, synonymEnabled: settings.synonymEnabled ? { ...settings.synonymEnabled } : this.layoutSettings.synonymEnabled }; this.invalidateCaches(); }
     dateExtent(): { min: Date; max: Date } | null { const values = this.dateValues(); if (!values.length) return null; let min = values[0].time; let max = min; for (let index = 1; index < values.length; index++) { const time = values[index].time; if (time < min) min = time; if (time > max) max = time; } return { min: new Date(min), max: new Date(max) }; }
     setDashboardDateRange(start?: Date, end?: Date): void { this.dashboardDateRange = start && end ? { start: start.getTime(), end: end.getTime() } : null; }
@@ -89,6 +144,41 @@ export class GlobalQnaEngine {
             .sort((a, b) => b.score - a.score || a.index - b.index).slice(0, limit).map((x) => x.item);
     }
 
+    valueAutocomplete(search: string, contextText = "", limit = 12): QnaAutocompleteItem[] {
+        const beforeAt = contextText.slice(0, contextText.lastIndexOf("@"));
+        const normalizedContext = norm(beforeAt);
+        const scopedField = this.context.fields.map((field) => ({ field, position: normalizedContext.lastIndexOf(norm(field.name)) }))
+            .filter((item) => item.position >= 0).sort((a, b) => b.position - a.position || b.field.name.length - a.field.name.length)[0]?.field;
+        const query = norm(search);
+        const matches: Array<QnaAutocompleteItem & { score: number; order: number }> = [];
+        let order = 0;
+        for (const field of scopedField ? [scopedField] : this.context.fields) for (const value of field.uniqueValues) {
+            const label = norm(value.label);
+            const score = !query ? 1 : label === query ? 10 : label.startsWith(query) ? 8 : label.includes(query) ? 6 : -1;
+            if (score >= 0) matches.push({ label: value.label, detail: field.name, score, order: order++ });
+        }
+        return matches.sort((a, b) => b.score - a.score || a.order - b.order).slice(0, limit).map(({ label, detail }) => ({ label, detail }));
+    }
+
+    measureAutocomplete(search: string, limit = 12): QnaAutocompleteItem[] {
+        const query = norm(search);
+        return this.context.measures.map((measure, order) => {
+            const label = norm(measure.name);
+            const score = !query ? 1 : label === query ? 10 : label.startsWith(query) ? 8 : label.includes(query) ? 6 : -1;
+            return { item: { label: measure.name, detail: "Measure" } as QnaAutocompleteItem, score, order };
+        }).filter((match) => match.score >= 0).sort((a, b) => b.score - a.score || a.order - b.order).slice(0, limit).map((match) => match.item);
+    }
+
+    insertValueFilter(text: string, atIndex: number, fieldName: string, label: string): string {
+        const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        let before = text.slice(0, atIndex).replace(/\s+(?:and|or)\s*$/i, " ").trimEnd();
+        const existing = new RegExp(`${escaped}\\s*\\(([^()]*)\\)\\s*$`, "i");
+        const fieldAtEnd = new RegExp(`${escaped}\\s*$`, "i");
+        if (existing.test(before)) return before.replace(existing, (_match, values: string) => `${fieldName} (${values.trim()} | ${label})`);
+        if (fieldAtEnd.test(before)) return before.replace(fieldAtEnd, `${fieldName} (${label})`);
+        return `${before}${before ? " " : ""}${fieldName} (${label})`;
+    }
+
     recognizedTerms(text: string): Array<{ start: number; end: number; kind: "measure" | "field" | "value" }> {
         if (!this.termCandidates) { const candidates: Array<{ label: string; lower: string; kind: "measure" | "field" | "value" }> = []; this.context.measures.forEach((item) => { candidates.push({ label: item.name, lower: item.name.toLowerCase(), kind: "measure" }); const short = item.name.replace(/^(?:sum|total|average|avg|minimum|min|maximum|max|count|distinct count)\s+of\s+/i, "").trim(); if (short !== item.name) candidates.push({ label: short, lower: short.toLowerCase(), kind: "measure" }); }); this.context.fields.forEach((field) => { candidates.push({ label: field.name, lower: field.name.toLowerCase(), kind: "field" }); field.uniqueValues.forEach((item) => candidates.push({ label: item.label, lower: item.label.toLowerCase(), kind: "value" })); }); this.context.measures.forEach((item) => this.configuredAliases(item.name).forEach((alias) => candidates.push({ label: alias, lower: alias.toLowerCase(), kind: "measure" }))); this.context.fields.forEach((item) => this.configuredAliases(item.name).forEach((alias) => candidates.push({ label: alias, lower: alias.toLowerCase(), kind: "field" }))); this.termCandidates = candidates.sort((a, b) => b.label.length - a.label.length); }
         const lower = text.toLowerCase(); const matches: Array<{ start: number; end: number; kind: "measure" | "field" | "value" }> = [];
@@ -99,20 +189,48 @@ export class GlobalQnaEngine {
     private invalidateCaches(): void { this.termCandidates = null; this.autocompleteItems.clear(); this.cachedDateValues = null; this.responseCache.clear(); }
     private configuredAliases(name: string): string[] { if (this.layoutSettings.synonymEnabled?.[name] === false) return []; return (this.layoutSettings.synonyms?.[name] || []).map(norm).filter(Boolean); }
 
+    private applyQuestionSynonyms(response: QnaResponse, question: string): QnaResponse {
+        const sourceQuestion = this.resolveExplicitFilters(question).question; const normalized = ` ${norm(sourceQuestion)} `; const aliases = new Map<string, string>();
+        const usedText = (candidate: string): string | undefined => { const words = norm(candidate).split(" ").filter(Boolean); if (!words.length) return undefined; const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^a-z0-9]+"); return sourceQuestion.match(new RegExp(`(^|[^a-z0-9])(${pattern})(?=$|[^a-z0-9])`, "i"))?.[2]; };
+        for (const entity of [...this.context.fields, ...this.context.measures]) {
+            if (this.layoutSettings.synonymEnabled?.[entity.name] === false) continue;
+            const configured = this.layoutSettings.synonyms?.[entity.name] || []; const candidates = "uniqueValues" in entity ? configured : [...configured, ...measureAliases(entity.name).filter((alias) => alias !== norm(entity.name))];
+            const used = candidates.filter((alias) => normalized.includes(` ${norm(alias)} `)).sort((a, b) => norm(b).length - norm(a).length).map(usedText).find(Boolean);
+            if (used && !normalized.includes(` ${norm(entity.name)} `)) aliases.set(entity.name, used);
+        }
+        if (!aliases.size) return response;
+        const replace = (text: string): string => { let result = text; for (const [name, alias] of [...aliases].sort((a, b) => b[0].length - a[0].length)) { const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); result = result.replace(new RegExp(`(^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "gi"), (_match, prefix: string) => `${prefix}${alias}`); } return result; };
+        const table = response.table ? { ...response.table, columns: response.table.columns.map(replace), matrix: response.table.matrix ? { ...response.table.matrix, rowHeader: replace(response.table.matrix.rowHeader) } : undefined } : undefined;
+        if (table?.columns[0] === "Measure") table.rows = table.rows.map((row) => [aliases.get(row[0]) || row[0], ...row.slice(1)]);
+        const chart = response.chart ? { ...response.chart, title: replace(response.chart.title), labels: response.chart.labels.map((label) => aliases.get(label) || label), series: response.chart.series?.map((series) => ({ ...series, name: aliases.get(series.name) || series.name })) } : undefined;
+        return { ...response, text: replace(response.text), table, chart, kpi: response.kpi ? { ...response.kpi, title: replace(response.kpi.title) } : undefined };
+    }
+
     answer(question: string): QnaResponse {
         const range = this.dashboardDateRange; const cacheKey = `${range?.start || 0}:${range?.end || 0}:${question}`; const cached = this.responseCache.get(cacheKey); if (cached) return cached;
-        const response = this.computeAnswer(question); this.responseCache.set(cacheKey, response); if (this.responseCache.size > 100) this.responseCache.delete(this.responseCache.keys().next().value!); return response;
+        this.answerFilterFields = new Set<string>();
+        const response = this.applyQuestionSynonyms(this.attachAnswerContext(this.computeAnswer(question)), question); this.responseCache.set(cacheKey, response); if (this.responseCache.size > 100) this.responseCache.delete(this.responseCache.keys().next().value!); return response;
     }
 
     private computeAnswer(question: string): QnaResponse {
         const explicitFilter = this.resolveExplicitFilters(question); const q = norm(explicitFilter.question);
+        const partial = this.partialValueRequest(q);
+        if (partial) {
+            if (partial.matches.length === 1) {
+                const match = partial.matches[0];
+                return this.computeAnswer(`${question.replace(new RegExp(`\\b${partial.word}\\b`, "i"), "")} ${match.field.name} (${match.label})`);
+            }
+            return { text: `“${partial.word}” matches more than one value. Choose the value you mean.`, suggestions: partial.matches.slice(0, 6).map((match) => `${question.replace(new RegExp(`\\b${partial.word}\\b`, "i"), "")} ${match.field.name} (${match.label})`) };
+        }
         if (!q) return this.help();
         if (!this.context.rowCount) return { text: "Add fields and measures to this visual before asking a question." };
         const structured = this.structuredConfiguration(explicitFilter.question);
         if (structured) return this.configuredAnswer(structured.mode, structured.rows, structured.columns, structured.measures, explicitFilter.values);
-        const explicitFields = this.resolveFields(q);
-        const measureQuery = explicitFields.reduce((text, field) => text.replace(new RegExp(`\\b${norm(field.name).replace(/\s+/g, "\\s+")}\\b`, "g"), " "), q);
-        const measures = this.resolveMeasures(measureQuery);
+        const entityQuery = this.withoutVisualInstructions(q);
+        const explicitFields = this.resolveFields(entityQuery);
+        const measureQuery = explicitFields.reduce((text, field) => text.replace(new RegExp(`\\b${norm(field.name).replace(/\s+/g, "\\s+")}\\b`, "g"), " "), entityQuery);
+        const explicitMeasures = this.resolveMeasures(measureQuery, false);
+        const measures = explicitMeasures.length ? explicitMeasures : this.resolveMeasures(measureQuery);
         const measure = measures[0];
         const requestedAggregation = this.resolveAggregation(q); const aggregation = (requestedAggregation === "count" || requestedAggregation === "distinctCount") && /^(?:distinct count|count|row count|record count|number of)\b/i.test(measure?.name || "") ? "sum" : requestedAggregation;
         const chartType = this.resolveChartType(q);
@@ -120,16 +238,20 @@ export class GlobalQnaEngine {
         const matchedValues = [...this.resolveValues(q), ...explicitFilter.values].filter((item, index, all) => all.findIndex((other) => other.field.key === item.field.key && norm(other.label) === norm(item.label)) === index);
         const comparisonValues = this.valueComparison(matchedValues);
         const explicitField = explicitFields[0];
+        const periodComparison = measure && this.periodComparison(q, explicitFields, measure, aggregation, matchedValues);
+        if (periodComparison) return periodComparison;
+        const fieldListRequest = explicitFields.length > 0 && !explicitMeasures.length && !chartType && !ranking && !/\b(?:how many|count|number of|compare|comparison|versus|vs)\b/.test(q);
+        if (fieldListRequest) return this.dimensionList(explicitFields, this.scopeIndices(matchedValues));
         let field = explicitField;
         if (explicitFields.length > 1 && measures.length) {
             const multiScope = this.scopeIndicesExcept(matchedValues, new Set(explicitFields.map((item) => item.key)));
-            const yearField = explicitFields.find((item) => /\byear\b/i.test(item.name)); const monthField = explicitFields.find((item) => /\bmonth\b/i.test(item.name)); const categoryFields = explicitFields.filter((item) => item.key !== yearField?.key && item.key !== monthField?.key); const automaticPeriodLayout = !chartType && !/\btable\b/.test(q);
+            const yearField = explicitFields.find((item) => /\byear\b/i.test(item.name)); const monthField = explicitFields.find((item) => /\bmonth\b/i.test(item.name)); const categoryFields = explicitFields.filter((item) => item.key !== yearField?.key && item.key !== monthField?.key); const wantsTable = this.requestsVisual(q, "table"); const wantsMatrix = this.requestsVisual(q, "matrix"); const automaticPeriodLayout = !chartType && !wantsTable;
             const selectedPeriods = matchedValues.filter((item) => /\b(?:year|month)\b/i.test(item.field.name)); if (automaticPeriodLayout && !yearField && !monthField && selectedPeriods.length === 1) return this.hierarchyMatrix(this.orderFieldsByCardinality(explicitFields, multiScope), [], measures, aggregation, multiScope, selectedPeriods[0].label);
             if (automaticPeriodLayout && yearField && monthField && yearField.key !== monthField.key) return this.hierarchyMatrix([monthField, ...categoryFields], [yearField], measures, aggregation, multiScope);
             const singlePeriod = yearField || monthField; if (automaticPeriodLayout && singlePeriod && categoryFields.length) return this.hierarchyMatrix(categoryFields, [singlePeriod], measures, aggregation, multiScope);
-            if (/\bmatrix\b/.test(q)) return this.hierarchyMatrix(this.orderFieldsByCardinality(explicitFields, multiScope), [], measures, aggregation, multiScope);
+            if (wantsMatrix) return this.hierarchyMatrix(this.orderFieldsByCardinality(explicitFields, multiScope), [], measures, aggregation, multiScope);
             const visibleFields = explicitFields.filter((item) => this.fieldCardinality(item, multiScope) > 1);
-            if (!chartType && !/\btable\b/.test(q) && visibleFields.length > 1 && this.shouldUseMatrix(visibleFields, multiScope)) return this.hierarchyMatrix(this.orderFieldsByCardinality(visibleFields, multiScope), [], measures, aggregation, multiScope);
+            if (!chartType && !wantsTable && visibleFields.length > 1 && this.shouldUseMatrix(visibleFields, multiScope)) return this.hierarchyMatrix(this.orderFieldsByCardinality(visibleFields, multiScope), [], measures, aggregation, multiScope);
             return this.groupedByFields(explicitFields, measures, aggregation, multiScope, chartType, ranking);
         }
         if (measures.length > 1) {
@@ -172,36 +294,98 @@ export class GlobalQnaEngine {
         return { text: "Ask about any loaded field or measure. Request a total, comparison, table, chart, trend, top or bottom ranking, or highest and lowest value.", suggestions: ["Show total", "Create a bar chart", "Show top 5", "Compare values"] };
     }
 
-    private resolveMeasures(q: string): QnaMeasure[] {
-        const matches = this.context.measures.map((measure) => ({ measure, keys: Array.from(new Set([...measureAliases(measure.name), ...this.configuredAliases(measure.name)])) }))
-            .map((item) => ({ ...item, matchedKey: item.keys.filter((key) => (` ${q} `).includes(` ${key} `)).sort((a, b) => b.length - a.length)[0] }))
-            .filter((item) => !!item.matchedKey).sort((a, b) => b.matchedKey!.length - a.matchedKey!.length).map((item) => item.measure);
-        return matches.length ? Array.from(new Map(matches.map((measure) => [measure.key, measure])).values()) : (this.context.measures.length === 1 ? [this.context.measures[0]] : []);
+    private resolveMeasures(q: string, fallbackToOnlyMeasure = true): QnaMeasure[] {
+        const matches = this.nonOverlappingMentions(q, this.context.measures.map((measure) => ({ item: measure, keys: Array.from(new Set([...measureAliases(measure.name), ...this.configuredAliases(measure.name)])) })));
+        return matches.length ? Array.from(new Map(matches.map((measure) => [measure.key, measure])).values()) : (fallbackToOnlyMeasure && this.context.measures.length === 1 ? [this.context.measures[0]] : []);
+    }
+
+    private dimensionList(fields: QnaField[], scope: number[]): QnaResponse {
+        const groups = new Map<string, { labels: string[]; indices: number[] }>();
+        for (const index of scope) {
+            const labels = fields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels);
+            const group = groups.get(key) || { labels, indices: [] }; group.indices.push(index); groups.set(key, group);
+        }
+        const values = Array.from(groups.values()).sort((a, b) => { for (let index = 0; index < fields.length; index++) { const result = this.compareFieldLabels(fields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; });
+        return {
+            text: `${fields.map((field) => field.name).join(" and ")} list.`,
+            table: {
+                columns: fields.map((field) => field.name),
+                rows: values.map((value) => value.labels),
+                rowIndices: values.map((value) => value.indices),
+                selectionFieldsByColumn: fields.map(() => fields.map((field) => field.name))
+            }
+        };
     }
 
     private resolveFields(q: string): QnaField[] {
-        return this.context.fields.map((field) => ({ field, keys: [norm(field.name), ...this.configuredAliases(field.name)] }))
-            .map((item) => ({ ...item, key: item.keys.filter((key) => (` ${q} `).includes(` ${key} `)).sort((a, b) => b.length - a.length)[0] }))
-            .filter((item) => !!item.key).sort((a, b) => q.indexOf(a.key!) - q.indexOf(b.key!) || b.key!.length - a.key!.length).map((item) => item.field);
+        return this.nonOverlappingMentions(q, this.context.fields.map((field) => ({ item: field, keys: [norm(field.name), ...this.configuredAliases(field.name)] })));
+    }
+
+    private nonOverlappingMentions<T extends { key: string }>(q: string, entities: Array<{ item: T; keys: string[] }>): T[] {
+        const padded = ` ${q} `; const candidates: Array<{ item: T; start: number; end: number; length: number }> = [];
+        for (const entity of entities) for (const key of new Set(entity.keys.filter(Boolean))) {
+            const needle = ` ${key} `; let from = 0;
+            while (from < padded.length) { const found = padded.indexOf(needle, from); if (found < 0) break; const start = found + 1; candidates.push({ item: entity.item, start, end: start + key.length, length: key.length }); from = found + 1; }
+        }
+        const accepted: typeof candidates = [];
+        for (const candidate of candidates.sort((a, b) => b.length - a.length || a.start - b.start)) {
+            if (!accepted.some((match) => candidate.start < match.end && candidate.end > match.start)) accepted.push(candidate);
+        }
+        return accepted.sort((a, b) => a.start - b.start || b.length - a.length)
+            .filter((match, index, all) => all.findIndex((other) => other.item.key === match.item.key) === index).map((match) => match.item);
     }
 
     private resolveValues(q: string): Array<{ field: QnaField; label: string; indices: number[] }> {
-        const matches: Array<{ field: QnaField; label: string; indices: number[]; key: string }> = [];
+        const padded = ` ${q} `;
+        const matches: Array<{ field: QnaField; label: string; indices: number[]; key: string; start: number; end: number }> = [];
         this.context.fields.forEach((field) => field.uniqueValues.forEach((value) => {
             const key = norm(value.label);
-            if (key.length >= 2 && (` ${q} `).includes(` ${key} `)) matches.push({ field, label: value.label, indices: value.indices, key });
+            if (key.length < 2) return;
+            const needle = ` ${key} `; let from = 0;
+            while (from < padded.length) {
+                const found = padded.indexOf(needle, from); if (found < 0) break;
+                const start = found + 1; matches.push({ field, label: value.label, indices: value.indices, key, start, end: start + key.length }); from = found + 1;
+            }
         }));
-        return matches.sort((a, b) => b.key.length - a.key.length).filter((item, index, all) =>
-            all.findIndex((other) => other.field.key === item.field.key && other.label === item.label) === index);
+        const accepted: typeof matches = [];
+        for (const candidate of matches.sort((a, b) => b.key.length - a.key.length || a.start - b.start)) {
+            const coveredByLongerValue = accepted.some((match) => match.key.length > candidate.key.length && candidate.start < match.end && candidate.end > match.start);
+            if (!coveredByLongerValue) accepted.push(candidate);
+        }
+        return accepted.sort((a, b) => a.start - b.start || b.key.length - a.key.length).filter((item, index, all) =>
+            all.findIndex((other) => other.field.key === item.field.key && other.label === item.label) === index).map(({ field, label, indices }) => ({ field, label, indices }));
+    }
+
+    private partialValueRequest(q: string): { word: string; matches: Array<{ field: QnaField; label: string }> } | undefined {
+        // Only interpret a leading value request, never fragments of field names
+        // or visual instructions. Ambiguous prefixes require an explicit choice.
+        const word = q.match(/^show\s+([a-z]{3,})\s+by\s/)?.[1];
+        if (!word || this.resolveFields(word).length || this.resolveMeasures(word, false).length || this.resolveValues(word).length) return undefined;
+        const matches = this.context.fields.flatMap((field) => field.uniqueValues.filter((value) => norm(value.label).startsWith(`${word} `)).map((value) => ({ field, label: value.label })));
+        return matches.length ? { word, matches } : undefined;
     }
 
     private resolveExplicitFilters(question: string): { question: string; values: Array<{ field: QnaField; label: string; indices: number[] }> } {
         let remaining = question; const values: Array<{ field: QnaField; label: string; indices: number[] }> = [];
+        remaining = remaining.replace(/;\s*answerFilters:\s*(\S+)\s*$/i, (_match, encoded: string) => {
+            try {
+                const filters = JSON.parse(decodeURIComponent(encoded));
+                if (Array.isArray(filters)) for (const filter of filters) {
+                    const field = this.context.fields.find((item) => item.name === filter.field);
+                    if (field && Array.isArray(filter.values)) for (const label of filter.values) {
+                        if (typeof label !== "string") continue;
+                        const found = field.uniqueValues.find((item) => item.label === label);
+                        values.push({ field, label, indices: found?.indices || [] });
+                    }
+                }
+            } catch { /* Ignore malformed saved filter metadata. */ }
+            return "";
+        });
         const fields = this.context.fields.slice().sort((a, b) => b.name.length - a.name.length);
         fields.forEach((field) => {
             const escaped = field.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); const pattern = new RegExp(`(^|[\\s,;])${escaped}\\s*\\(([^()]*)\\)`, "gi");
             remaining = remaining.replace(pattern, (match, prefix: string, content: string) => {
-                const requested = String(content || "").split(/\s*(?:,|\|)\s*/).map((item) => item.trim()).filter(Boolean);
+                const requested = String(content || "").split(/\s*(?:,|\||\/|\band\b|\bor\b)\s*/i).map((item) => item.trim()).filter(Boolean);
                 requested.forEach((requestedValue) => { const found = field.uniqueValues.find((item) => norm(item.label) === norm(requestedValue)); values.push({ field, label: found?.label || requestedValue, indices: found?.indices || [] }); });
                 return prefix;
             });
@@ -215,12 +399,53 @@ export class GlobalQnaEngine {
         return Array.from(groups.values()).filter((group) => group.labels.length > 1).sort((a, b) => b.labels.length - a.labels.length)[0];
     }
 
+    private periodComparison(q: string, explicitFields: QnaField[], measure: QnaMeasure, aggregation: QnaAggregation, matchedValues: Array<{ field: QnaField; label: string; indices: number[] }>): QnaResponse | undefined {
+        const comparisonRequest = /\b(?:vs|versus|compare|comparison)\b/.test(q);
+        const yearField = this.context.fields.find((field) => /(^|\s)year($|\s)/i.test(field.name));
+        const monthField = this.context.fields.find((field) => /(^|\s)month($|\s)/i.test(field.name));
+        if (!yearField) return undefined;
+        const occurrences = (field: QnaField) => field.uniqueValues.flatMap((value) => { const key = norm(value.label); const result: Array<{ value: typeof value; position: number }> = []; const padded = ` ${q} `; const needle = ` ${key} `; let from = 0; while (key && from < padded.length) { const found = padded.indexOf(needle, from); if (found < 0) break; result.push({ value, position: found + 1 }); from = found + 1; } return result; }).sort((a, b) => a.position - b.position);
+        const years = occurrences(yearField); if (years.length < (comparisonRequest ? 2 : 1)) return undefined;
+        const months = monthField ? occurrences(monthField) : [];
+        const distinctMonths = Array.from(new Map(months.map((item) => [item.value.label, item.value])).values());
+        const periods = years.map((year) => { const nearest = months.slice().sort((a, b) => Math.abs(a.position - year.position) - Math.abs(b.position - year.position))[0]; const month = nearest || (distinctMonths.length === 1 ? { value: distinctMonths[0], position: year.position } : undefined); return { year: year.value, month: month?.value, label: month ? `${month.value.label} ${year.value.label}` : year.value.label }; });
+        const uniquePeriods = Array.from(new Map(periods.map((period) => [`${period.month?.label || ""}\u0000${period.year.label}`, period])).values());
+        if (uniquePeriods.length < (comparisonRequest ? 2 : 1)) return undefined;
+        this.answerFilterFields.add(yearField.name);
+        if (monthField && uniquePeriods.some((period) => period.month)) this.answerFilterFields.add(monthField.name);
+        const temporalKeys = new Set([yearField.key, ...(monthField ? [monthField.key] : [])]);
+        const rowFields = explicitFields.filter((field) => !temporalKeys.has(field.key));
+        const excluded = new Set([...temporalKeys, ...rowFields.map((field) => field.key)]);
+        const baseScope = this.scopeIndicesExcept(matchedValues, excluded); const baseSet = new Set(baseScope);
+        const periodGroups = uniquePeriods.map((period) => { const yearSet = new Set(period.year.indices); const monthSet = period.month ? new Set(period.month.indices) : undefined; const indices = baseScope.filter((index) => yearSet.has(index) && (!monthSet || monthSet.has(index))); return { ...period, indices }; });
+        const groups = new Map<string, { labels: string[]; indices: number[] }>();
+        if (rowFields.length) for (const index of baseScope) { const labels = rowFields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels); const group = groups.get(key) || { labels, indices: [] }; group.indices.push(index); groups.set(key, group); }
+        else groups.set("total", { labels: ["Total"], indices: baseScope.slice() });
+        const rows = Array.from(groups.values()).sort((a, b) => { for (let index = 0; index < rowFields.length; index++) { const result = this.compareFieldLabels(rowFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; });
+        const monthOrder = (label: string) => { const names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]; const value = norm(label); const named = names.findIndex((name) => name === value || name.startsWith(value.slice(0, 3))); if (named >= 0) return named + 1; return Number(value.match(/\b(?:1[0-2]|0?[1-9])\b/)?.[0] || 12); };
+        const ytdGroups = periodGroups.map((period) => { const yearSet = new Set(period.year.indices); const targetMonth = period.month ? monthOrder(period.month.label) : 12; return baseScope.filter((index) => yearSet.has(index) && (!monthField || monthOrder(monthField.values[index]) <= targetMonth)); });
+        const intersections = rows.map((row) => { const rowSet = new Set(row.indices); return periodGroups.map((period) => period.indices.filter((index) => rowSet.has(index))); });
+        const ytdIntersections = rows.map((row) => { const rowSet = new Set(row.indices); return ytdGroups.map((period) => period.filter((index) => rowSet.has(index))); });
+        const formattedRows = rows.map((row, rowIndex) => [row.labels.join(" > "), ...periodGroups.flatMap((_, periodIndex) => [intersections[rowIndex][periodIndex], ytdIntersections[rowIndex][periodIndex]].map((indices) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation)))]);
+        const selectedScope = Array.from(new Set(periodGroups.flatMap((period) => period.indices))).filter((index) => baseSet.has(index));
+        if (rowFields.length) formattedRows.push(["Grand Total", ...periodGroups.flatMap((period, index) => [period.indices, ytdGroups[index]].map((indices) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation)))]);
+        const rowIndices = [...rows.map((row, rowIndex) => Array.from(new Set(intersections[rowIndex].flat()))), ...(rowFields.length ? [selectedScope] : [])];
+        const periodFieldNames = [...(monthField && periodGroups.some((period) => period.month) ? [monthField.name] : []), yearField.name]; const rowFieldNames = rowFields.map((field) => field.name);
+        const cellIndices = rows.map((row, rowIndex) => [rowIndices[rowIndex], ...periodGroups.flatMap((_, periodIndex) => [intersections[rowIndex][periodIndex], ytdIntersections[rowIndex][periodIndex]])]); if (rowFields.length) cellIndices.push([selectedScope, ...periodGroups.flatMap((period, index) => [period.indices, ytdGroups[index]])]);
+        const selectionFieldsByColumn = [rowFieldNames, ...periodGroups.flatMap(() => [[...rowFieldNames, ...periodFieldNames], [...rowFieldNames, ...periodFieldNames]])];
+        const rowTitle = rowFields.length ? rowFields.map((field) => field.name).join(" > ") : "Comparison";
+        const columns = [rowTitle, ...periodGroups.flatMap((period) => [period.label, `${period.label} YTD`])]; const hiddenColumns = periodGroups.map((_, index) => 2 + index * 2); const ytdColumns = periodGroups.map((_, index) => ({ sourceColumn: 1 + index * 2, ytdColumn: 2 + index * 2 }));
+        const text = comparisonRequest ? `${this.aggregationLabel(aggregation)} ${measure.name} comparison by ${rowTitle}.` : `${this.aggregationLabel(aggregation)} ${measure.name} by ${rowTitle} for ${uniquePeriods[0].label}.`;
+        return { text, table: { columns, rows: formattedRows, rowIndices, cellIndices, selectionFieldsByColumn, hiddenColumns, ytdColumns } };
+    }
+
     private dateValues(): Array<{ index: number; time: number }> { if (this.cachedDateValues) return this.cachedDateValues; const field = this.context.fields.find((item) => /(^|\s)date($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)month($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)year($|\s)/i.test(item.name)); if (!field) return this.cachedDateValues = []; const values: Array<{ index: number; time: number }> = []; for (let index = 0; index < field.values.length; index++) { const text = String(field.values[index] || "").trim(); const normalized = /^\d{4}-\d{2}$/.test(text) ? `${text}-01` : /^\d{4}$/.test(text) ? `${text}-01-01` : text; const time = new Date(normalized).getTime(); if (Number.isFinite(time)) values.push({ index, time }); } return this.cachedDateValues = values; }
-    private baseIndices(): number[] { const selected = this.context.selectedIndices.length ? this.context.selectedIndices : this.allIndices; if (!this.dashboardDateRange) return selected; const range = this.dashboardDateRange; const allowed = new Set<number>(); for (const item of this.dateValues()) if (item.time >= range.start && item.time <= range.end) allowed.add(item.index); return selected.filter((index) => allowed.has(index)); }
+    private baseIndices(): number[] { const selected = this.context.selectedIndices.length ? this.context.selectedIndices : this.allIndices; if (!this.dashboardDateRange) return selected; const dateField = this.context.fields.find((item) => /(^|\s)date($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)month($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)year($|\s)/i.test(item.name)); if (dateField) this.answerFilterFields.add(dateField.name); const range = this.dashboardDateRange; const allowed = new Set<number>(); for (const item of this.dateValues()) if (item.time >= range.start && item.time <= range.end) allowed.add(item.index); return selected.filter((index) => allowed.has(index)); }
 
     private scopeIndices(values: Array<{ field: QnaField; indices: number[] }>, groupedField?: QnaField): number[] {
         const base = this.baseIndices();
         const filters = values.filter((value) => !groupedField || value.field.key !== groupedField.key);
+        filters.forEach((filter) => this.answerFilterFields.add(filter.field.name));
         if (!filters.length) return base;
         const byField = new Map<string, Set<number>>();
         filters.forEach((value) => {
@@ -234,6 +459,7 @@ export class GlobalQnaEngine {
     private scopeIndicesExcept(values: Array<{ field: QnaField; indices: number[] }>, excludedFields: Set<string>): number[] {
         const base = this.baseIndices();
         const filters = values.filter((value) => !excludedFields.has(value.field.key)); const byField = new Map<string, Set<number>>();
+        filters.forEach((filter) => this.answerFilterFields.add(filter.field.name));
         filters.forEach((value) => { const set = byField.get(value.field.key) || new Set<number>(); value.indices.forEach((index) => set.add(index)); byField.set(value.field.key, set); });
         const sets = Array.from(byField.values());
         return base.filter((index) => sets.every((set) => set.has(index)));
@@ -248,17 +474,17 @@ export class GlobalQnaEngine {
             .filter((item) => item.indices.length);
         const rows = groups.map((group) => ({ ...group, value: measure ? this.aggregate(measure, group.indices, aggregation) : group.indices.length }));
         rows.sort((a, b) => ranking ? (ranking.direction === "top" ? b.value - a.value : a.value - b.value) : this.compareFieldLabels(field, a.label, b.label));
-        const chartLimit = chartType && rows.length > 15 ? 15 : 100;
+        const chartLimit = chartType && rows.length > 15 ? 15 : rows.length;
         if (chartType && !ranking && rows.length > 15) rows.sort((a, b) => b.value - a.value);
         const limited = ranking ? rows.slice(0, ranking.limit) : rows.slice(0, chartLimit);
         const metricName = measure ? `${this.aggregationLabel(aggregation)} ${measure.name}` : "Count";
         const valueLabel = (value: number) => measure ? this.formatAggregate(measure, value, aggregation) : value.toLocaleString();
         const type = chartType || (ranking ? "bar" : undefined);
         const text = `${ranking ? `${ranking.direction === "top" ? "Top" : "Bottom"} ${limited.length}` : metricName} by ${field.name}.`;
-        if (type) return { text, chart: { type, title: `${metricName} by ${field.name}`, labels: limited.map((x) => x.label), values: limited.map((x) => x.value), valueLabels: limited.map((x) => valueLabel(x.value)), rowIndices: limited.map((x) => x.indices), totalLabel: valueLabel(limited.reduce((sum, item) => sum + item.value, 0)), valueFormat: measure?.formatString, formatHint: measure?.formatHint } };
+        if (type) return { text, chart: { type, axisTitle: field.name, title: `${metricName} by ${field.name}`, labels: limited.map((x) => x.label), values: limited.map((x) => x.value), valueLabels: limited.map((x) => valueLabel(x.value)), rowIndices: limited.map((x) => x.indices), totalLabel: valueLabel(limited.reduce((sum, item) => sum + item.value, 0)), valueFormat: measure?.formatString, formatHint: measure?.formatHint } };
         const tableRows = limited.map((x) => [x.label, valueLabel(x.value)]); const rowIndices = limited.map((x) => x.indices);
         if (limited.length) { const totalIndices = requested.size ? Array.from(new Set(groups.flatMap((item) => item.indices))) : scope.slice(); const totalValue = measure ? this.aggregate(measure, totalIndices, aggregation) : totalIndices.length; tableRows.push(["Grand Total", valueLabel(totalValue)]); rowIndices.push(totalIndices); }
-        return { text, table: { columns: [field.name, metricName], rows: tableRows, rowIndices } };
+        return { text, table: { columns: [field.name, metricName], rows: tableRows, rowIndices, selectionFieldsByColumn: [[field.name], [field.name]] } };
     }
 
     private compareMeasures(measures: QnaMeasure[], aggregation: QnaAggregation, scope: number[], chartType?: QnaChartType): QnaResponse {
@@ -270,13 +496,13 @@ export class GlobalQnaEngine {
 
     private groupedMeasures(field: QnaField, measures: QnaMeasure[], aggregation: QnaAggregation, scope: number[], chartType?: QnaChartType, requestedGroups: string[] = []): QnaResponse {
         const allowed = new Set(scope); const requested = new Set(requestedGroups); let groups = field.uniqueValues.filter((item) => !requested.size || requested.has(item.label)).map((item) => ({ label: item.label, indices: item.indices.filter((index) => allowed.has(index)) })).filter((item) => item.indices.length);
-        if (chartType && groups.length > 15) groups = groups.sort((a, b) => this.aggregate(measures[0], b.indices, aggregation) - this.aggregate(measures[0], a.indices, aggregation)).slice(0, 15); else groups = groups.slice(0, 30);
+        if (chartType && groups.length > 15) groups = groups.sort((a, b) => this.aggregate(measures[0], b.indices, aggregation) - this.aggregate(measures[0], a.indices, aggregation)).slice(0, 15);
         const series = measures.map((measure) => { const values = groups.map((group) => this.aggregate(measure, group.indices, aggregation)); return { name: measure.name, values, valueLabels: values.map((value) => this.formatAggregate(measure, value, aggregation)) }; });
         const title = `${measures.map((measure) => measure.name).join(" vs ")} by ${field.name}`;
         if (chartType) return { text: `${title}.`, chart: { type: chartType, title, axisTitle: field.name, labels: groups.map((group) => group.label), values: series[0].values, valueLabels: series[0].valueLabels, rowIndices: groups.map((group) => group.indices), series, totalLabel: measures.length === 1 ? this.formatAggregate(measures[0], series[0].values.reduce((sum, value) => sum + value, 0), aggregation) : undefined, valueFormat: measures.length === 1 ? measures[0].formatString : undefined, formatHint: measures.length === 1 ? measures[0].formatHint : undefined } };
         const rows = groups.map((group, groupIndex) => [group.label, ...series.map((item) => item.valueLabels[groupIndex])]); const rowIndices = groups.map((group) => group.indices);
         if (groups.length) { const totalIndices = requested.size ? Array.from(new Set(groups.flatMap((group) => group.indices))) : scope.slice(); rows.push(["Grand Total", ...measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, totalIndices, aggregation), aggregation))]); rowIndices.push(totalIndices); }
-        return { text: `${title}.`, table: { columns: [field.name, ...measures.map((measure) => measure.name)], rows, rowIndices } };
+        return { text: `${title}.`, table: { columns: [field.name, ...measures.map((measure) => measure.name)], rows, rowIndices, selectionFieldsByColumn: Array.from({ length: measures.length + 1 }, () => [field.name]) } };
     }
 
     private groupedByFields(fields: QnaField[], measures: QnaMeasure[], aggregation: QnaAggregation, scope: number[], chartType?: QnaChartType, ranking?: { direction: "top" | "bottom"; limit: number }): QnaResponse {
@@ -287,7 +513,7 @@ export class GlobalQnaEngine {
         else rows.sort((a, b) => { for (let index = 0; index < fields.length; index++) { const result = this.compareFieldLabels(fields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; });
         const pivotChart = !!chartType && !ranking && fields.length === 2 && measures.length === 1;
         if (chartType && !ranking && !pivotChart && rows.length > 15) rows.sort((a, b) => b.values[0] - a.values[0]);
-        rows = rows.slice(0, ranking?.limit || (chartType && !pivotChart ? 15 : 100));
+        rows = rows.slice(0, ranking?.limit || (chartType && !pivotChart ? 15 : rows.length));
         const title = `${measures.map((measure) => measure.name).join(" vs ")} by ${fields.map((field) => field.name).join(" and ")}`;
         const rowIndices = rows.map((row) => row.indices); const labels = rows.map((row) => row.labels.join(" · "));
         if (chartType) {
@@ -310,10 +536,16 @@ export class GlobalQnaEngine {
         }
         const tableRows = rows.map((row) => [...row.labels, ...row.values.map((value, index) => this.formatAggregate(measures[index], value, aggregation))]);
         if (rows.length) { const totalIndices = scope.slice(); tableRows.push([...fields.map((_, index) => index === 0 ? "Grand Total" : ""), ...measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, totalIndices, aggregation), aggregation))]); rowIndices.push(totalIndices); }
-        return { text: `${title}.`, table: { columns: [...fields.map((field) => field.name), ...measures.map((measure) => measure.name)], rows: tableRows, rowIndices } };
+        const selectionFields = fields.map((field) => field.name);
+        return { text: `${title}.`, table: { columns: [...fields.map((field) => field.name), ...measures.map((measure) => measure.name)], rows: tableRows, rowIndices, selectionFieldsByColumn: Array.from({ length: fields.length + measures.length }, () => selectionFields) } };
     }
 
     configuredAnswer(mode: "table" | "matrix", rowNames: string[], columnNames: string[], measureNames: string[], filters: Array<{ field: QnaField; indices: number[] }> = []): QnaResponse {
+        this.answerFilterFields = new Set<string>();
+        return this.attachAnswerContext(this.computeConfiguredAnswer(mode, rowNames, columnNames, measureNames, filters));
+    }
+
+    private computeConfiguredAnswer(mode: "table" | "matrix", rowNames: string[], columnNames: string[], measureNames: string[], filters: Array<{ field: QnaField; indices: number[] }> = []): QnaResponse {
         const fieldByName = (name: string) => this.context.fields.find((field) => norm(field.name) === norm(name)); const measureByName = (name: string) => this.context.measures.find((measure) => norm(measure.name) === norm(name));
         let rows = rowNames.map(fieldByName).filter((item): item is QnaField => !!item); const columns = columnNames.map(fieldByName).filter((item): item is QnaField => !!item); const measures = measureNames.map(measureByName).filter((item): item is QnaMeasure => !!item); const scope = this.scopeIndices(filters);
         if (!rows.length || !measures.length) return { text: "Choose at least one row field and one measure." };
@@ -326,21 +558,21 @@ export class GlobalQnaEngine {
         return { mode: modeMatch[1].toLowerCase() as "table" | "matrix", rows: section("rows"), columns: section("columns"), measures: section("values") };
     }
 
-    private fieldCardinality(field: QnaField, scope: number[]): number { const allowed = new Set(scope); return field.uniqueValues.filter((item) => item.indices.some((index) => allowed.has(index))).length; }
+    private fieldCardinality(field: QnaField, scope: Set<number> | number[]): number { const allowed = scope instanceof Set ? scope : new Set(scope); let count = 0; for (const item of field.uniqueValues) if (item.indices.some((index) => allowed.has(index))) count++; return count; }
     private compareFieldLabels(field: QnaField, a: string, b: string): number { if (/\bmonth\b/i.test(field.name)) { const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]; const monthRank = (value: string) => { const normalized = value.trim().toLowerCase(); const direct = months.findIndex((month) => month === normalized || month.startsWith(normalized.slice(0, 3))); if (direct >= 0) return direct; const numeric = normalized.match(/(?:^|\D)(1[0-2]|0?[1-9])(?:\D|$)/); return numeric ? Number(numeric[1]) - 1 : 99; }; const rank = monthRank(a) - monthRank(b); if (rank) return rank; } if (/\bquarter\b/i.test(field.name)) { const quarter = (value: string) => Number(value.match(/[1-4]/)?.[0] || 99); const rank = quarter(a) - quarter(b); if (rank) return rank; } return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }); }
-    private orderFieldsByCardinality(fields: QnaField[], scope: number[]): QnaField[] { return this.layoutSettings.cardinalityLowToHighHierarchy ? fields.slice().sort((a, b) => this.fieldCardinality(a, scope) - this.fieldCardinality(b, scope) || a.name.localeCompare(b.name)) : fields; }
-    private shouldUseMatrix(fields: QnaField[], scope: number[]): boolean { if (!this.layoutSettings.cardinalityFallbackEnabled || fields.length < 2) return false; const counts = fields.map((field) => this.fieldCardinality(field, scope)).filter(Boolean); if (counts.length < 2) return false; const highest = Math.max(...counts); const threshold = highest * Math.max(1, Math.min(100, this.layoutSettings.cardinalityMatrixThresholdPct)) / 100; return counts.some((count) => count < highest && count <= threshold); }
+    private orderFieldsByCardinality(fields: QnaField[], scope: number[]): QnaField[] { if (!this.layoutSettings.cardinalityLowToHighHierarchy) return fields; const allowed = new Set(scope); const counts = new Map(fields.map((field) => [field, this.fieldCardinality(field, allowed)])); return fields.slice().sort((a, b) => counts.get(a)! - counts.get(b)! || a.name.localeCompare(b.name)); }
+    private shouldUseMatrix(fields: QnaField[], scope: number[]): boolean { if (!this.layoutSettings.cardinalityFallbackEnabled || fields.length < 2) return false; const allowed = new Set(scope); const counts = fields.map((field) => this.fieldCardinality(field, allowed)).filter(Boolean); if (counts.length < 2) return false; const highest = Math.max(...counts); const threshold = highest * Math.max(1, Math.min(100, this.layoutSettings.cardinalityMatrixThresholdPct)) / 100; return counts.some((count) => count < highest && count <= threshold); }
 
     private hierarchyMatrix(rowFields: QnaField[], columnFields: QnaField[], measures: QnaMeasure[], aggregation: QnaAggregation, scope: number[], contextLabel = ""): QnaResponse {
         const maxColumns = Math.max(0, this.layoutSettings.cardinalityMaxColumnValues); const temporalColumns = columnFields.some((field) => /\b(?:year|quarter|month|week|date|day)\b/i.test(field.name)); const columnLimit = temporalColumns ? Math.max(12, maxColumns) : maxColumns; const columnMap = new Map<string, { labels: string[]; label: string; indices: number[] }>(); if (columnFields.length) scope.forEach((index) => { const labels = columnFields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels); const group = columnMap.get(key) || { labels, label: labels.join(" > "), indices: [] }; group.indices.push(index); columnMap.set(key, group); }); const columnGroups = Array.from(columnMap.values()).sort((a, b) => { for (let index = 0; index < columnFields.length; index++) { const result = this.compareFieldLabels(columnFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; }).slice(0, columnLimit || undefined);
-        type Group = { key: string; label: string; indices: number[]; level: number; parentKey?: string; hasChildren: boolean }; const groups: Group[] = []; const walk = (indices: number[], level: number, parentKey?: string) => { const field = rowFields[level]; if (!field) return; const indexSet = new Set(indices); field.uniqueValues.map((item) => ({ label: item.label, indices: item.indices.filter((index) => indexSet.has(index)) })).filter((item) => item.indices.length).sort((a, b) => this.compareFieldLabels(field, a.label, b.label)).slice(0, 100).forEach((item) => { const key = `${parentKey || "root"}>${level}:${item.label}`; const hasChildren = level < rowFields.length - 1; groups.push({ key, label: item.label, indices: item.indices, level, parentKey, hasChildren }); if (hasChildren) walk(item.indices, level + 1, key); }); }; walk(scope, 0);
+        type Group = { key: string; label: string; indices: number[]; level: number; parentKey?: string; hasChildren: boolean }; const groups: Group[] = []; const walk = (indices: number[], level: number, parentKey?: string) => { const field = rowFields[level]; if (!field) return; const indexSet = new Set(indices); field.uniqueValues.map((item) => ({ label: item.label, indices: item.indices.filter((index) => indexSet.has(index)) })).filter((item) => item.indices.length).sort((a, b) => this.compareFieldLabels(field, a.label, b.label)).forEach((item) => { const key = `${parentKey || "root"}>${level}:${item.label}`; const hasChildren = level < rowFields.length - 1; groups.push({ key, label: item.label, indices: item.indices, level, parentKey, hasChildren }); if (hasChildren) walk(item.indices, level + 1, key); }); }; walk(scope, 0);
         const matrixTotalColumns = columnGroups.length ? measures.map((measure) => measures.length === 1 ? "Total" : `${measure.name} Total`) : []; const valueColumns = columnGroups.length ? [...columnGroups.flatMap((column) => measures.map((measure) => measures.length === 1 ? column.label : `${column.label} · ${measure.name}`)), ...matrixTotalColumns] : measures.map((measure) => contextLabel ? `${measure.name} · ${contextLabel}` : measure.name); const intersections = groups.map((group) => { const groupSet = new Set(group.indices); return columnGroups.map((column) => column.indices.filter((index) => groupSet.has(index))); }); const rows = groups.map((group, groupIndex) => { const values = columnGroups.length ? [...columnGroups.flatMap((_, columnIndex) => measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, intersections[groupIndex][columnIndex], aggregation), aggregation))), ...measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, group.indices, aggregation), aggregation))] : measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, group.indices, aggregation), aggregation)); return [group.label, ...values]; });
         const totalValues = columnGroups.length ? [...columnGroups.flatMap((column) => measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, column.indices, aggregation), aggregation))), ...measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, scope, aggregation), aggregation))] : measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, scope, aggregation), aggregation)); rows.push(["Grand Total", ...totalValues]); const rowIndices = [...groups.map((group) => group.indices), scope]; const cellIndices = groups.map((group, groupIndex) => [group.indices, ...(columnGroups.length ? [...intersections[groupIndex].flatMap((indices) => measures.map(() => indices)), ...measures.map(() => group.indices)] : measures.map(() => group.indices))]); cellIndices.push([scope, ...(columnGroups.length ? [...columnGroups.flatMap((column) => measures.map(() => column.indices)), ...measures.map(() => scope)] : measures.map(() => scope))]); const rowSelectionFields = rowFields.map((field) => field.name); const selectionFieldsByColumn = [rowSelectionFields, ...(columnGroups.length ? [...columnGroups.flatMap(() => measures.map(() => [...rowSelectionFields, ...columnFields.map((field) => field.name)])), ...measures.map(() => rowSelectionFields)] : measures.map(() => rowSelectionFields))]; const columnTitle = columnFields.length ? ` with columns ${columnFields.map((field) => field.name).join(" > ")}` : ""; const contextTitle = contextLabel ? ` for ${contextLabel}` : ""; const title = `${measures.map((measure) => measure.name).join(" vs ")} matrix by ${rowFields.map((field) => field.name).join(" > ")}${columnTitle}${contextTitle}`; return { text: `${title}.`, table: { columns: [rowFields.map((field) => field.name).join(" > "), ...valueColumns], rows, rowIndices, cellIndices, selectionFieldsByColumn, matrix: { levels: [...groups.map((group) => group.level), 0], keys: [...groups.map((group) => group.key), "grand-total"], parentKeys: [...groups.map((group) => group.parentKey), undefined], hasChildren: [...groups.map((group) => group.hasChildren), false], rowHeader: rowFields.map((field) => field.name).join(" > ") } } };
     }
 
     private matrixByFields(rowFields: QnaField[], columnField: QnaField, measures: QnaMeasure[], aggregation: QnaAggregation, scope: number[]): QnaResponse {
         const allowed = new Set(scope); const columnGroups = columnField.uniqueValues.map((item) => ({ ...item, indices: item.indices.filter((index) => allowed.has(index)) })).filter((item) => item.indices.length).slice(0, 12);
-        const rows = new Map<string, { labels: string[]; indices: number[] }>(); scope.forEach((index) => { const labels = rowFields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels); const row = rows.get(key) || { labels, indices: [] }; row.indices.push(index); rows.set(key, row); }); const matrixRows = Array.from(rows.values()).sort((a, b) => { for (let index = 0; index < rowFields.length; index++) { const result = this.compareFieldLabels(rowFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; }).slice(0, 100).map((row) => { const rowSet = new Set(row.indices); return { ...row, intersections: columnGroups.map((column) => column.indices.filter((index) => rowSet.has(index))) }; });
+        const rows = new Map<string, { labels: string[]; indices: number[] }>(); scope.forEach((index) => { const labels = rowFields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels); const row = rows.get(key) || { labels, indices: [] }; row.indices.push(index); rows.set(key, row); }); const matrixRows = Array.from(rows.values()).sort((a, b) => { for (let index = 0; index < rowFields.length; index++) { const result = this.compareFieldLabels(rowFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; }).map((row) => { const rowSet = new Set(row.indices); return { ...row, intersections: columnGroups.map((column) => column.indices.filter((index) => rowSet.has(index))) }; });
         const columns = [...rowFields.map((field) => field.name), ...columnGroups.flatMap((column) => measures.map((measure) => measures.length === 1 ? column.label : `${column.label} · ${measure.name}`)), "Total"];
         const tableRows = matrixRows.map((row) => { const cells = row.intersections.flatMap((indices) => measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation))); const total = this.formatAggregate(measures[0], this.aggregate(measures[0], row.indices, aggregation), aggregation); return [...row.labels, ...cells, total]; });
         const rowIndices = matrixRows.map((row) => row.indices); const totalIndices = scope.slice(); if (matrixRows.length) { tableRows.push([...rowFields.map((_, index) => index === 0 ? "Grand Total" : ""), ...columnGroups.flatMap((column) => measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, column.indices, aggregation), aggregation))), this.formatAggregate(measures[0], this.aggregate(measures[0], totalIndices, aggregation), aggregation)]); rowIndices.push(totalIndices); }
@@ -378,26 +610,39 @@ export class GlobalQnaEngine {
     }
 
     private resolveChartType(q: string): QnaChartType | undefined {
-        if (/\bheat\s*map\b/.test(q)) return "heatmap";
-        if (/\bsmall\s+multiples?\b/.test(q)) return "smallMultiples";
-        if (/\bkpi\s+trend|trend\s+card\b/.test(q)) return "kpiTrend";
-        if (/\bsparklines?\b/.test(q)) return "sparkline";
-        if (/\bstacked\s+(?:bar|graph)\b/.test(q)) return "stackedBar";
-        if (/\bstacked\s+column\b/.test(q)) return "stackedColumn";
-        if (/\bcombo|column(?:s)?\s+and\s+line|line\s+and\s+column/.test(q)) return "combo";
-        if (/\bwaterfall|variance\s+(?:chart|graph)|change contribution\b/.test(q)) return "waterfall";
-        if (/\bscatter|bubble|correlation|relationship between\b/.test(q)) return "scatter";
-        if (/\btreemap|tree map|share of\b/.test(q)) return "treemap";
-        if (/\bfunnel\b/.test(q)) return "funnel";
-        if (/\bgauge|against target|progress to target\b/.test(q)) return "gauge";
-        if (/\bbullet\b/.test(q)) return "bullet";
-        if (/\bdonut|doughnut\b/.test(q)) return "donut";
-        if (/\bpie\b/.test(q)) return "pie";
-        if (/\bline|trend|over time\b/.test(q)) return "line";
-        if (/\barea chart|area graph\b/.test(q)) return "area";
-        if (/\bcolumn\b/.test(q)) return "column";
-        if (/\bbar|chart|graph|visual\b/.test(q)) return "bar";
+        if (this.requestsVisual(q, "heatmap", "heat map")) return "heatmap";
+        if (this.requestsVisual(q, "small multiples", "small multiple")) return "smallMultiples";
+        if (this.requestsVisual(q, "kpi trend", "trend card")) return "kpiTrend";
+        if (this.requestsVisual(q, "sparkline", "sparklines")) return "sparkline";
+        if (this.requestsVisual(q, "stacked bar")) return "stackedBar";
+        if (this.requestsVisual(q, "stacked column")) return "stackedColumn";
+        if (this.requestsVisual(q, "combo") || /\bcolumns?\s+and\s+line\s+chart\b|\bline\s+and\s+columns?\s+chart\b/.test(q)) return "combo";
+        if (this.requestsVisual(q, "waterfall") || /\bvariance\s+(?:chart|graph)\b|\bchange contribution\b/.test(q)) return "waterfall";
+        if (this.requestsVisual(q, "scatter", "bubble") || /\bcorrelation between\b|\brelationship between\b/.test(q)) return "scatter";
+        if (this.requestsVisual(q, "treemap", "tree map") || /\bshare of\b/.test(q)) return "treemap";
+        if (this.requestsVisual(q, "funnel")) return "funnel";
+        if (this.requestsVisual(q, "gauge") || /\bagainst target\b|\bprogress to target\b/.test(q)) return "gauge";
+        if (this.requestsVisual(q, "bullet")) return "bullet";
+        if (this.requestsVisual(q, "donut", "doughnut")) return "donut";
+        if (this.requestsVisual(q, "pie")) return "pie";
+        if (this.requestsVisual(q, "line") || /\btrend over time\b/.test(q)) return "line";
+        if (this.requestsVisual(q, "area")) return "area";
+        if (this.requestsVisual(q, "column")) return "column";
+        if (this.requestsVisual(q, "bar", "chart", "graph", "visual")) return "bar";
         return undefined;
+    }
+
+    private requestsVisual(q: string, ...names: string[]): boolean {
+        return names.some((name) => {
+            const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+            return new RegExp(`\\b(?:as|in)\\s+(?:a\\s+)?${escaped}(?:\\s+(?:chart|graph|card|visual))?\\b|\\b${escaped}\\s+(?:chart|graph|card|visual)\\b`).test(q);
+        });
+    }
+
+    private withoutVisualInstructions(q: string): string {
+        const names = ["small multiples", "small multiple", "stacked column", "stacked bar", "kpi trend", "trend card", "heat map", "heatmap", "sparkline", "sparklines", "waterfall", "scatter", "bubble", "treemap", "tree map", "funnel", "gauge", "bullet", "donut", "doughnut", "pie", "line", "area", "column", "combo", "bar", "kpi", "table", "matrix", "chart", "graph", "visual"];
+        const alternatives = names.map((name) => name.replace(/\s+/g, "\\s+")).join("|");
+        return q.replace(new RegExp(`\\b(?:as|in)\\s+(?:a\\s+)?(?:${alternatives})(?:\\s+(?:chart|graph|card|visual))?\\b|\\b(?:${alternatives})\\s+(?:chart|graph|card|visual)\\b`, "g"), " ");
     }
 
     private resolveRanking(q: string): { direction: "top" | "bottom"; limit: number } | undefined {
