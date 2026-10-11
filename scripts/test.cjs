@@ -497,13 +497,34 @@ assert.deepEqual(singlePeriodTable.hiddenColumns, [2]);
 assert.deepEqual(singlePeriodTable.ytdColumns, [{ sourceColumn: 1, ytdColumn: 2 }]);
 assert.deepEqual(singlePeriodTable.rows[1], ["Home Living", "100", "1,099"]);
 assert.deepEqual(singlePeriodTable.backgroundFields, ["Year", "Month"]);
+const singleValueSinglePeriod = periodEngine.answer("Home Living JUNE 2025 Rent Measure");
+assert.equal(singleValueSinglePeriod.kpi.value, "100", "one field value and one period returns the filtered measure instead of an empty comparison table");
+assert.equal(singleValueSinglePeriod.table, undefined);
+assert.deepEqual(periodEngine.resolvedAnswerFilters("show Home Living by Year Rent Measure"), [{ field: "Assigned Tenant Name", values: ["Home Living"] }], "Edit exposes value filters inferred from the original question");
 const yearComparison = periodEngine.answer("Assigned Tenant Name 2025 versus 2026 Rent Measure").table;
 assert.deepEqual(yearComparison.columns, ["Assigned Tenant Name", "2025", "2025 YTD", "2026", "2026 YTD"]);
 assert.deepEqual(yearComparison.rows[1], ["Home Living", "1,099", "1,099", "130", "130"]);
 const hierarchy = retailEngine.answer("Matrix; rows: Assigned Group > Assigned Sales Category; columns: ; values: Sum of Rent");
 assert.equal(hierarchy.table.matrix.rowHeader, "Assigned Group > Assigned Sales Category");
+assert.deepEqual(hierarchy.table.matrix.levelNames, ["Assigned Group", "Assigned Sales Category"]);
 assert.deepEqual(hierarchy.table.columns, ["Assigned Group > Assigned Sales Category", "Sum of Rent"]);
 assert.ok(hierarchy.table.matrix.hasChildren.some(Boolean));
+const oneChildEngine = new GlobalQnaEngine(buildContext({ columns: [
+  { displayName: "Parent", queryName: "Model.Parent", roles: { fields: true } },
+  { displayName: "Child", queryName: "Model.Child", roles: { fields: true } },
+  { displayName: "Cost", queryName: "Model.Cost", roles: { measures: true } }
+], rows: [["Parent A", "Child A", 10], ["Parent B", "Child B", 20]] }));
+oneChildEngine.setLayoutSettings({ cardinalityLowToHighHierarchy: false });
+const oneChildMatrix = oneChildEngine.answer("Matrix; rows: Parent > Child; columns: ; values: Cost").table;
+assert.equal(oneChildMatrix.matrix, undefined, "one child per parent uses separate columns without redundant expand controls");
+assert.deepEqual(oneChildMatrix.columns, ["Parent", "Child", "Cost"]);
+const mixedChildEngine = new GlobalQnaEngine(buildContext({ columns: [
+  { displayName: "Parent", queryName: "Model.Parent", roles: { fields: true } },
+  { displayName: "Child", queryName: "Model.Child", roles: { fields: true } },
+  { displayName: "Cost", queryName: "Model.Cost", roles: { measures: true } }
+], rows: [["Parent A", "Child A1", 10], ["Parent A", "Child A2", 20], ["Parent B", "Child B", 30]] }));
+mixedChildEngine.setLayoutSettings({ cardinalityLowToHighHierarchy: false });
+assert.ok(mixedChildEngine.answer("Matrix; rows: Parent > Child; columns: ; values: Cost").table.matrix, "mixed child counts keep a consistent hierarchy");
 
 const nullTotalEngine = new GlobalQnaEngine(buildContext({ columns: [
   { displayName: "Tenant", queryName: "Tenant", roles: { fields: true } },

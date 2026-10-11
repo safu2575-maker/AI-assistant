@@ -34,7 +34,7 @@ export interface QnaTable {
     selectionFieldsByColumn?: string[][];
     hiddenColumns?: number[];
     ytdColumns?: Array<{ sourceColumn: number; ytdColumn: number }>;
-    matrix?: { levels: number[]; keys: string[]; parentKeys: Array<string | undefined>; hasChildren: boolean[]; rowHeader: string };
+    matrix?: { levels: number[]; keys: string[]; parentKeys: Array<string | undefined>; hasChildren: boolean[]; rowHeader: string; levelNames?: string[] };
 }
 
 export interface QnaLayoutSettings {
