@@ -25,7 +25,19 @@ export interface QnaContext {
     formatValue(measure: QnaMeasure, value: number): string;
 }
 
+export type ModelSelection = Array<{ table: string; column?: string; hierarchy?: string; hierarchyLevel?: string; dateDay?: boolean; value: string | number | boolean }>;
 export interface QnaTable {
+    modelPeriods?: Array<{ sourceColumn: number; period: string; question: string; measure: string; groupCount: number }>;
+    modelRowSelections?: ModelSelection[][];
+    modelCellSelections?: ModelSelection[][][];
+    modelSelections?: ModelSelection[];
+    modelSnapshot?: boolean;
+    modelEditor?: { rows: string[]; columns: string[]; measures: string[]; filters: Array<{ field: string; values: string[] }> };
+    modelPivot?: { rowFields: string[]; columnField: string; columnFields?: string[]; columnValues: string[]; measures: string[] };
+    modelTotals?: string[];
+    modelRawRows?: Array<Array<number | null>>;
+    modelRawTotals?: Array<number | null>;
+    modelFormats?: Array<string | undefined>;
     backgroundFields?: string[];
     columns: string[];
     rows: string[][];
@@ -34,6 +46,7 @@ export interface QnaTable {
     selectionFieldsByColumn?: string[][];
     hiddenColumns?: number[];
     ytdColumns?: Array<{ sourceColumn: number; ytdColumn: number }>;
+    ttmColumns?: Array<{ sourceColumn: number; ttmColumn: number }>;
     matrix?: { levels: number[]; keys: string[]; parentKeys: Array<string | undefined>; hasChildren: boolean[]; rowHeader: string; levelNames?: string[] };
 }
 
@@ -45,11 +58,18 @@ export interface QnaLayoutSettings {
     cardinalityLowToHighHierarchy: boolean;
     autocompleteFields?: string[];
     autocompleteMeasures?: string[];
+    defaultMeasure?: string;
+    additiveMeasures?: string[];
     synonyms?: Record<string, string[]>;
     synonymEnabled?: Record<string, boolean>;
 }
 
 export interface QnaChart {
+    groupNames?: string[];
+    groupValues?: string[][];
+    subtitle?: string;
+    periodDetails?: string[];
+    modelRowSelections?: ModelSelection[][];
     backgroundFields?: string[];
     type: QnaChartType;
     title: string;
@@ -60,11 +80,12 @@ export interface QnaChart {
     valueFormat?: string;
     formatHint?: QnaMeasure["formatHint"];
     rowIndices: number[][];
-    series?: Array<{ name: string; values: number[]; valueLabels: string[] }>;
+    series?: Array<{ name: string; values: number[]; valueLabels: string[]; rowIndices?: number[][] }>;
     axisTitle?: string;
 }
 
 export interface QnaResponse {
+    modelQuery?: boolean;
     text: string;
     kpi?: { title: string; value: string; subtitle?: string };
     table?: QnaTable;
@@ -75,4 +96,5 @@ export interface QnaResponse {
 export interface QnaAutocompleteItem {
     label: string;
     detail: string;
+    originalName?: string;
 }

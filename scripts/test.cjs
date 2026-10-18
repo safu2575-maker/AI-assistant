@@ -1,4 +1,21 @@
 const assert = require("node:assert/strict");
+{
+ const {evaluateFormula}=require('../.tmp/test/qna/formula');
+ const calc=s=>evaluateFormula(s,new Map([['Sales',100],['Rent',0],['Missing',null]]));
+ assert.equal(calc('=if([Rent]=0,0,[Sales]/[Rent])'),0);
+ assert.equal(calc('IF(ISBLANK([Missing]),25,[Missing]+1)'),25);
+ assert.equal(calc('ISBLANK([Rent])'),0);
+ assert.equal(calc('COALESCE([Missing],[Rent],99)'),0);
+ assert.equal(calc('DIVIDE([Sales],[Missing],7)'),7);
+ assert.equal(calc('IFERROR([Sales]/[Rent],5)'),5);
+ assert.equal(calc('IF(AND([Sales]>=100,NOT(ISBLANK([Rent]))),1,2)'),1);
+ assert.equal(calc('IF(OR(FALSE,[sales]<>0);ROUND(.125,2);0)'),.13);
+ assert.equal(calc('IF(FALSE,1,BLANK())'),null);
+ assert.throws(()=>calc('IF(1,2,UNKNOWN(3))'),/Unknown function/);
+ assert.throws(()=>calc('IF(1)'),/arguments/);
+ assert.throws(()=>calc('[Missing]+1'),/Blank value/);
+ assert.throws(()=>calc('if'),/parentheses/);
+}
 const { toggleSelection } = require("../.tmp/test/selectionFilter");
 assert.deepEqual(toggleSelection([0, 1], [0, 1], false), [], "repeat row click clears filtering");
 assert.deepEqual(toggleSelection([0, 1], [0], false), [0], "cell click narrows a row to its exact period intersection");
@@ -10,6 +27,7 @@ assert.deepEqual(buildSelectionFilters([tenantPart, { supported: true, rawValues
 assert.deepEqual(buildSelectionFilters([tenantPart, { target: { table: "Retail", column: "Year" }, supported: true, rawValues: [2024, 2025] }]).map((filter) => filter.toJSON().values), [["Comfort Store"], [2024, 2025]]);
 assert.equal(canCompactSelection([["A", "Jan", 2024], ["A", "Feb", 2025]], [0, 1], [{ index: 0, rawValues: ["A"] }, { index: 1, rawValues: ["Jan", "Feb"] }, { index: 2, rawValues: [2024, 2025] }]), true);
 assert.equal(canCompactSelection([["A", "Jan", 2024], ["A", "Feb", 2025], ["A", "Jan", 2025]], [0, 1], [{ index: 0, rawValues: ["A"] }, { index: 1, rawValues: ["Jan", "Feb"] }, { index: 2, rawValues: [2024, 2025] }]), false, "field filters must not introduce an unselected tuple");
+assert.equal(canCompactSelection([["A", "July", 2024], ["A", "January", 2025], ["A", "July", 2025]], [0, 1], [{ index: 0, rawValues: ["A"] }, { index: 1, rawValues: ["July", "January"] }, { index: 2, rawValues: [2024, 2025] }]), false, "a TTM window crossing years must preserve exact Month-Year pairs");
 assert.deepEqual(resolveFilterTarget({ expr: { source: { entity: "Retail" }, ref: "Assigned Tenant Name" } }), { table: "Retail", column: "Assigned Tenant Name" });
 assert.deepEqual(resolveFilterTarget({ expr: { arg: { arg: { entity: "LocalDateTable" }, hierarchy: "Date Hierarchy" }, level: "Year" }, queryName: "Retail.Month.Year" }), { table: "LocalDateTable", hierarchy: "Date Hierarchy", hierarchyLevel: "Year" });
 assert.deepEqual(resolveFilterTarget({ queryName: "Retail.Month.Year" }), { table: "Retail", hierarchy: "Month", hierarchyLevel: "Year" });
@@ -41,6 +59,13 @@ applySelectionFilter(filterHost, [0, 1], []);
 assert.equal(filterCalls.length, 8);
 assert.deepEqual(filterCalls.at(-1)[0].target, [0, 1]);
 assert.equal(filterCalls.at(-1)[3], 0);
+filterCalls.length = 0;
+const monthFilter = new BasicFilter({ table: "Calendar", column: "Month" }, "In", ["July", "January"]).toJSON();
+applySelectionFilter(filterHost, [0, 1], [tenantFilter, monthFilter, yearsFilter], [["Bean Street", "July", 2024], ["Bean Street", "January", 2025]], true);
+const tuplePayload = filterCalls.at(-1)[0];
+assert.equal(tuplePayload.filterType, 6, "cross-year rolling windows use a tuple filter");
+assert.deepEqual(tuplePayload.target, [{ table: "Retail", column: "Tenant" }, { table: "Calendar", column: "Month" }, { table: "Retail", column: "Year" }]);
+assert.deepEqual(tuplePayload.values, [[{ value: "Bean Street" }, { value: "July" }, { value: 2024 }], [{ value: "Bean Street" }, { value: "January" }, { value: 2025 }]]);
 const { buildContext } = require("../.tmp/test/dataAdapter");
 const { GlobalQnaEngine } = require("../.tmp/test/qna/engine");
 
@@ -67,10 +92,11 @@ async function checkVisualBackgroundSelection() {
     constructor(element, engine, onSelect) { ui = this; this.engine = engine; this.onSelect = onSelect; }
     updateEngine(engine) { this.engine = engine; }
     getState() { return {}; }
+    clearModelSelection() { this.selectModelRows([]); }
     setFilterChips(labels, remove) { this.labels = labels; this.remove = remove; }
   }
   const load = compiled.require.bind(compiled);
-  compiled.require = (name) => name === "./qna/ui" ? { GlobalQnaUi: UiStub } : name.endsWith(".less") ? {} : load(name);
+  compiled.require = (name) => name === "./fieldParameterTrial" ? { FieldParameterTrial: class { noteUiStateWrite() {} hydrate() {} selectDataView(views) { return views[0]; } update() {} fail() {} destroy() {} } } : name === "./qna/ui" ? { GlobalQnaUi: UiStub } : name.endsWith(".less") ? {} : load(name);
   compiled._compile(fs.readFileSync(filename, "utf8"), filename);
   const calls = [];
   const nativeSelections = []; let identitySequence = 0;
@@ -137,6 +163,42 @@ async function checkVisualBackgroundSelection() {
   await Promise.resolve();
   comparisonFilters = calls.filter((call) => call[0] !== null).map((call) => call[0]);
   assert.deepEqual(comparisonFilters.map((filter) => [filter.target.column, filter.values]), [["Tenant", ["Comfort Store"]], ["Month", ["June"]], ["Year", [2024]]], "comparison cell sends its exact tenant and Month-Year intersection");
+  calls.length = 0;
+  ui.selectModelRows([[{table:'Retail',column:'Tenant',value:'Home Living'}, {table:'Retail',column:'Year',value:2024}], [{table:'Retail',column:'Year',value:2025},{table:'Retail',column:'Tenant',value:'Home Living'}]]);
+  await Promise.resolve();
+  const modelFilters = calls.filter(call => call[0] !== null).map(call => call[0]);
+  assert.deepEqual(modelFilters.map(filter => [filter.target.column, filter.values]), [['Tenant',['Home Living']],['Year',[2024,2025]]], 'snapshot row selections preserve all context and normalize field order');
+  calls.length = 0;
+  ui.selectModelRows([[{table:'Retail',column:'Tenant',value:'Home Living'},{table:'Retail',column:'Year',value:2024}],[{table:'Retail',column:'Tenant',value:'Bean Street'},{table:'Retail',column:'Year',value:2025}]]);
+  await Promise.resolve();
+  assert.equal(calls.at(-1)[0].filterType, 6, 'diagonal selection uses exact tuples rather than the Cartesian product');
+  calls.length = 0;
+  ui.selectModelRows([[{table:'Retail',column:'Tenant',value:'Home Living'}]]);
+  ui.selectModelRows([]);
+  await Promise.resolve();
+  assert(calls.every(call => call[0] === null), 'clear wins over an in-flight selection callback');
+  assert.deepEqual(ui.labels, []);
+  calls.length = 0;
+  ui.selectModelRows([[{table:'Dates',hierarchy:'Date Hierarchy',hierarchyLevel:'Year',value:2025}]]);
+  await Promise.resolve();
+  assert.deepEqual(calls.at(-1)[0].target, {table:'Dates',hierarchy:'Date Hierarchy',hierarchyLevel:'Year'}, 'auto-date hierarchy targets are retained rather than discarded');
+  ui.selectModelRows([]); await Promise.resolve();
+  calls.length = 0;
+  const juneSelection = [2024,2025].flatMap(year => Array.from({length:30},(_,day)=>[{table:'Retail',column:'Tenant',value:'Tech Hub'},{table:'Retail',column:'Month',dateDay:true,value:new Date(Date.UTC(year,5,day+1)).toISOString()}]));
+  ui.selectModelRows(juneSelection); await Promise.resolve();
+  const juneFilters = calls.filter(call=>call[0]!==null).map(call=>call[0]);
+  assert.equal(juneFilters.filter(filter=>filter.target.column==='Month').length,2,'comparison dates use outer range plus gap exclusion');
+  assert(juneFilters.filter(filter=>filter.target.column==='Month').every(filter=>filter.conditions),'dates must not be sent as Basic text equality values');
+  const matchesDate = value => juneFilters.filter(filter=>filter.target.column==='Month').every(filter=>{
+    const conditions=filter.conditions.map(condition=>condition.operator==='LessThan'?value<condition.value:value>=condition.value);
+    return filter.logicalOperator==='And'?conditions.every(Boolean):conditions.some(Boolean);
+  });
+  for(const date of ['2024-06-01T00:00:00.000Z','2024-06-30T12:00:00.000Z','2025-06-01T00:00:00.000Z','2025-06-30T23:59:59.000Z']) assert(matchesDate(date),date);
+  for(const date of ['2024-05-31T23:59:59.000Z','2024-07-01T00:00:00.000Z','2025-01-01T00:00:00.000Z','2025-07-01T00:00:00.000Z']) assert(!matchesDate(date),date);
+  assert(ui.labels[0].includes('June 2024 + June 2025'));
+  calls.length = 0; ui.selectModelRows(juneSelection.slice(0,30)); await Promise.resolve();
+  assert.equal(calls.filter(call=>call[0]?.target?.column==='Month').length,1,'one period cell uses one date range');
+  ui.selectModelRows([]); await Promise.resolve();
   console.log("Visual background-filter callback checks passed.");
   visual.categorical.categories.forEach((category) => { category.identity = comparisonRows.map((_, index) => ({ key: String(index) })); });
   calls.length = 0;
@@ -156,11 +218,11 @@ async function checkVisualBackgroundSelection() {
     values: [{ source: comparisonColumns[3], values: ytdRows.map((row) => row[3]) }]
   } }] });
   calls.length = 0;
-  ui.onSelect([0, 1, 2, 3, 4, 5], false, ["Assigned Tenant Name", "Month", "Year"], ["Month", "Year"]);
+  ui.onSelect([0, 1, 2, 3, 4, 5], false, ["Assigned Tenant Name", "Month", "Year"], ["Month", "Year"], false, "June 2024 YTD");
   await Promise.resolve();
   assert.deepEqual(calls.filter((call) => call[0] !== null).map((call) => [call[0].target.column || call[0].target.hierarchyLevel, call[0].values]), [["Tenant", ["Bean Street"]], ["Month", months], ["Year", [2024]]], "runtime hierarchy metadata still sends three YTD field filters rather than six row identities");
   assert.equal(ui.labels.length, 1, "YTD is displayed as one combined selection chip");
-  assert.ok(ui.labels[0].includes("January, February, March, April, May, June"));
+  assert.equal(ui.labels[0], "Bean Street · YTD: Jan–Jun 2024", "a time-window selection is displayed as one concise chip");
   ui.remove(ui.labels[0]);
   await Promise.resolve();
   assert.deepEqual(ui.labels, [], "removing the combined YTD chip clears selection");
@@ -214,7 +276,14 @@ assert.equal(engine.autocomplete("sum of r")[0].label, "Sum of Revenue");
 assert.equal(engine.autocomplete("average r")[0].label, "Average Revenue");
 engine.setLayoutSettings({ autocompleteFields: [], autocompleteMeasures: [] });
 assert.equal(engine.autocomplete("rev").length, 0);
-assert.ok(engine.autocomplete("@rev").some((item) => item.label === "Revenue"));
+assert.equal(engine.autocomplete("@rev").length, 0, 'explicit searches respect hidden suggestions');
+assert.deepEqual(engine.measureAutocomplete('rev'), []);
+assert.deepEqual(engine.valueAutocomplete('', 'Department @'), []);
+engine.setLayoutSettings({synonyms:{Revenue:['turnover']}});
+assert.equal(engine.autocomplete('turnover')[0].label,'turnover','synonyms remain visible when the original measure is hidden');
+assert.equal(engine.measureAutocomplete('turnover')[0].label,'turnover');
+assert.ok(engine.answer('Revenue by Department').table,'hidden suggestions remain queryable');
+engine.setLayoutSettings({autocompleteFields:engine.configurationOptions().fields,autocompleteMeasures:engine.configurationOptions().measures,synonyms:{}});
 assert.deepEqual(engine.autocomplete("as", 4).map((item) => item.label), ["as a table", "as a matrix", "as a bar chart", "as a column chart"]);
 assert.ok(engine.autocomplete("as a", 8, "show Revenue by Department as a").some((item) => item.label === "as a bar chart"));
 assert.equal(engine.autocomplete("as a b", 8, "show Revenue by Department as a b")[0].label, "as a bar chart");
@@ -482,28 +551,42 @@ const periodEngine = new GlobalQnaEngine(buildContext({ columns: [
   ["Home Living", "May", 2025, 999], ["Comfort Store", "May", 2026, 999]
 ] }));
 const monthYearComparison = periodEngine.answer("Assigned Tenant Name June 2025 vs June 2026 Rent Measure").table;
-assert.deepEqual(monthYearComparison.columns, ["Assigned Tenant Name", "June 2025", "June 2025 YTD", "June 2026", "June 2026 YTD"]);
-assert.deepEqual(monthYearComparison.hiddenColumns, [2, 4]);
-assert.deepEqual(monthYearComparison.ytdColumns, [{ sourceColumn: 1, ytdColumn: 2 }, { sourceColumn: 3, ytdColumn: 4 }]);
-assert.deepEqual(monthYearComparison.rows, [["Comfort Store", "40", "40", "70", "1,069"], ["Home Living", "100", "1,099", "130", "130"], ["Grand Total", "140", "1,139", "200", "1,199"]]);
+assert.deepEqual(monthYearComparison.columns, ["Assigned Tenant Name", "June 2025", "June 2025 YTD", "June 2025 TTM", "June 2026", "June 2026 YTD", "June 2026 TTM"]);
+assert.deepEqual(monthYearComparison.hiddenColumns, [2, 3, 5, 6]);
+assert.deepEqual(monthYearComparison.ytdColumns, [{ sourceColumn: 1, ytdColumn: 2 }, { sourceColumn: 4, ytdColumn: 5 }]);
+assert.deepEqual(monthYearComparison.ttmColumns, [{ sourceColumn: 1, ttmColumn: 3 }, { sourceColumn: 4, ttmColumn: 6 }]);
+assert.deepEqual(monthYearComparison.rows, [["Comfort Store", "40", "40", "40", "70", "1,069", "1,069"], ["Home Living", "100", "1,099", "1,099", "130", "130", "130"], ["Grand Total", "140", "1,139", "1,139", "200", "1,199", "1,199"]]);
 assert.deepEqual(monthYearComparison.cellIndices[1][1], [0], "June 2025 is one paired period");
-assert.deepEqual(monthYearComparison.cellIndices[1][3], [1], "June 2026 is one paired period");
+assert.deepEqual(monthYearComparison.cellIndices[1][4], [1], "June 2026 is one paired period");
 assert.deepEqual(monthYearComparison.selectionFieldsByColumn[0], ["Assigned Tenant Name"], "row selection keeps periods as background filters");
 assert.deepEqual(monthYearComparison.selectionFieldsByColumn[1], ["Assigned Tenant Name", "Month", "Year"]);
 assert.deepEqual(monthYearComparison.backgroundFields, ["Year", "Month"], "comparison periods are sent with row cross-filtering");
 const singlePeriodTable = periodEngine.answer("show Rent Measure June 2025 by Assigned Tenant Name").table;
-assert.deepEqual(singlePeriodTable.columns, ["Assigned Tenant Name", "June 2025", "June 2025 YTD"]);
-assert.deepEqual(singlePeriodTable.hiddenColumns, [2]);
+assert.deepEqual(singlePeriodTable.columns, ["Assigned Tenant Name", "June 2025", "June 2025 YTD", "June 2025 TTM"]);
+assert.deepEqual(singlePeriodTable.hiddenColumns, [2, 3]);
 assert.deepEqual(singlePeriodTable.ytdColumns, [{ sourceColumn: 1, ytdColumn: 2 }]);
-assert.deepEqual(singlePeriodTable.rows[1], ["Home Living", "100", "1,099"]);
+assert.deepEqual(singlePeriodTable.ttmColumns, [{ sourceColumn: 1, ttmColumn: 3 }]);
+assert.deepEqual(singlePeriodTable.rows[1], ["Home Living", "100", "1,099", "1,099"]);
 assert.deepEqual(singlePeriodTable.backgroundFields, ["Year", "Month"]);
 const singleValueSinglePeriod = periodEngine.answer("Home Living JUNE 2025 Rent Measure");
 assert.equal(singleValueSinglePeriod.kpi.value, "100", "one field value and one period returns the filtered measure instead of an empty comparison table");
 assert.equal(singleValueSinglePeriod.table, undefined);
 assert.deepEqual(periodEngine.resolvedAnswerFilters("show Home Living by Year Rent Measure"), [{ field: "Assigned Tenant Name", values: ["Home Living"] }], "Edit exposes value filters inferred from the original question");
+const calendarMonths = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const ttmRows = [2023, 2024, 2025].flatMap((year) => calendarMonths.map((month, monthIndex) => ["Home Living", month, year, year * 100 + monthIndex + 1]));
+const ttmEngine = new GlobalQnaEngine(buildContext({ columns: [
+  { displayName: "Assigned Tenant Name", queryName: "Retail.Tenant", roles: { fields: true } },
+  { displayName: "Month", queryName: "Retail.Month", roles: { fields: true } },
+  { displayName: "Year", queryName: "Retail.Year", roles: { fields: true } },
+  { displayName: "Rent Measure", queryName: "Retail.Rent", roles: { measures: true } }
+], rows: ttmRows }));
+const juneTtm = ttmEngine.answer("Assigned Tenant Name June 2024 vs June 2025 Rent Measure").table;
+const june2025TtmIndices = juneTtm.cellIndices[0][6];
+assert.equal(june2025TtmIndices.length, 12, "June 2025 TTM contains exactly twelve months");
+assert.deepEqual(june2025TtmIndices.map((index) => `${ttmRows[index][1]} ${ttmRows[index][2]}`), ["July 2024", "August 2024", "September 2024", "October 2024", "November 2024", "December 2024", "January 2025", "February 2025", "March 2025", "April 2025", "May 2025", "June 2025"]);
 const yearComparison = periodEngine.answer("Assigned Tenant Name 2025 versus 2026 Rent Measure").table;
-assert.deepEqual(yearComparison.columns, ["Assigned Tenant Name", "2025", "2025 YTD", "2026", "2026 YTD"]);
-assert.deepEqual(yearComparison.rows[1], ["Home Living", "1,099", "1,099", "130", "130"]);
+assert.deepEqual(yearComparison.columns, ["Assigned Tenant Name", "2025", "2025 YTD", "2025 TTM", "2026", "2026 YTD", "2026 TTM"]);
+assert.deepEqual(yearComparison.rows[1], ["Home Living", "1,099", "1,099", "1,099", "130", "130", "130"]);
 const hierarchy = retailEngine.answer("Matrix; rows: Assigned Group > Assigned Sales Category; columns: ; values: Sum of Rent");
 assert.equal(hierarchy.table.matrix.rowHeader, "Assigned Group > Assigned Sales Category");
 assert.deepEqual(hierarchy.table.matrix.levelNames, ["Assigned Group", "Assigned Sales Category"]);
@@ -599,3 +682,123 @@ assert.ok(naturalFiltered.startsWith(naturalQuestion + "; answerFilters:"), "fil
 assert.deepEqual(engine.answerFilters(naturalFiltered), [{ field: "Department", values: ["North"] }]);
 const matrixToTable = engine.answer("Table; rows: Product > Month; columns: ; values: Revenue");
 assert.deepEqual(matrixToTable.table.columns, ["Product", "Month", "Revenue"], "matrix column fields remain visible when converted to table fields");
+
+// Refresh must never treat unfinished composer text as a submitted question.
+{
+  const { GlobalQnaUi } = require('../.tmp/test/qna/ui');
+  for (const automatic of [true, false]) {
+    const submitted = [];
+    const ui = { automaticGroupingEnabled: () => automatic, showingSavedDashboard: false,
+      questions: [], hasConversation: false, input: { value: 'unfinished question' },
+      messages: { scrollTop: 0 }, submit: (...args) => submitted.push(args),
+      clear: () => { throw new Error('Refresh must preserve a draft'); }, setRefreshAvailable() {} };
+    GlobalQnaUi.prototype.refreshCurrentView.call(ui);
+    assert.deepEqual(submitted, []);
+    assert.equal(ui.input.value, 'unfinished question');
+    if (automatic) {
+      ui.questions = ['Rent by Year'];
+      GlobalQnaUi.prototype.refreshCurrentView.call(ui);
+      assert.deepEqual(submitted, [['Rent by Year', true, true]]);
+      assert.equal(ui.input.value, 'unfinished question');
+    }
+  }
+}
+
+(async () => {
+  const { GlobalQnaUi } = require('../.tmp/test/qna/ui');
+  let rejectRequest; let requests = 0;
+  const ui = { input: {value: 'Rent by Year'}, automaticGroupingEnabled: () => false,
+    questionRequest: 0, clearQuestionSelection(){},renderInputHighlight(){}, closeSuggestions(){}, addBubble(){}, showRequestFailure(){}, setLoadingStage(){},
+    prepareQuestion(){ requests++; return new Promise((resolve, reject) => { rejectRequest = reject; }); } };
+  const first = GlobalQnaUi.prototype.submit.call(ui);
+  assert.equal(ui.input.value, '', 'Ask clears the composer before awaiting Power BI');
+  ui.input.value = 'Next question draft';
+  await GlobalQnaUi.prototype.submit.call(ui, 'Rent by Year');
+  assert.equal(requests, 1, 'duplicate submission does not restart the pending query');
+  rejectRequest(new Error('Host unavailable')); await first;
+  assert.equal(ui.input.value, 'Next question draft', 'completion must preserve newer typing');
+  assert.equal(ui.pendingQuestion, undefined, 'failure permits retry');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+{
+ const { indexGroupRows, collectTextValues } = require('../.tmp/test/queryPerformance');
+ const rows = [['A','2024','1'],['B','2025','2'],['A','2024','3'],['A|B','2024','4']];
+ const indices = indexGroupRows(rows, 2);
+ for (const row of rows) { const key = JSON.stringify(row.slice(0,2)); assert.equal(indices.get(key),rows.findIndex(candidate=>JSON.stringify(candidate.slice(0,2))===key)); }
+ const large = Array.from({length:30000},(_,i)=>['Tenant '+i, '2025']);
+ assert.equal(indexGroupRows(large,2).get(JSON.stringify(['Tenant 29999','2025'])),29999);
+ const values = collectTextValues(['Existing'], [['A'],[null],[12],['A'],['B'],['C']],0,3);
+ assert.deepEqual(values,['Existing','A','B']);
+ assert.deepEqual(collectTextValues([],large,0),large.slice(0,10000).map(row=>row[0]));
+}
+
+{
+ const {virtualRowWindow} = require('../.tmp/test/qna/virtualRows');
+ for (const count of [0,1,201,1000,30000]) {
+   for (const top of [-100,0,360,10000000]) {
+     const range = virtualRowWindow(count,top,600);
+     assert(range.start>=0 && range.end<=count && range.start<=range.end);
+     assert(range.end-range.start<=33,'DOM row count stays bounded');
+     assert.equal(range.before+(range.end-range.start)*36+range.after,count*36,'spacers preserve the full scroll height');
+   }
+ }
+ const rows=Array.from({length:30000},(_,i)=>({id:i,value:30000-i}));
+ const filtered=rows.filter(row=>row.id%2===0).sort((a,b)=>a.value-b.value);
+ const range=virtualRowWindow(filtered.length,3600,600);
+ assert.equal(filtered.slice(range.start,range.end)[0],filtered[range.start],'window preserves original row identity');
+ assert.equal(rows.length,30000,'windowing does not truncate export data');
+ assert.equal(virtualRowWindow(30000,10000000,600).end,30000,'last row stays reachable');
+}
+
+(async () => {
+ const {GlobalQnaUi} = require('../.tmp/test/qna/ui');
+ const originalDocument = global.document;
+ const node = () => ({children:[], handlers:{}, classList:{add(){}}, append(...items){this.children.push(...items)}, appendChild(item){this.children.push(item)}, replaceChildren(){this.children=[]}, setAttribute(){}, remove(){this.removed=true}, addEventListener(name,handler){this.handlers[name]=handler}});
+ global.document={createElement:node};
+ const ui=Object.create(GlobalQnaUi.prototype);
+ Object.assign(ui,{input:{value:'Rent by Year'},questions:[],messages:node(),questionRequest:0,automaticGroupingEnabled:()=>true,engine:{getLayoutSettings:()=>({conversationMode:'latest'})},clearQuestionSelection(){},renderInputHighlight(){},closeSuggestions(){},addBubble(){},displayQuestion:x=>x});
+ let rejectQuery;
+ ui.prepareQuestion=()=>new Promise((resolve,reject)=>{rejectQuery=reject});
+ ui.cancelQuestion=()=>rejectQuery(new Error('cancelled'));
+ try {
+  const running=ui.submit();
+  const loading=ui.messages.children[0];
+  ui.setLoadingStage('Waiting for Power BI…'); assert.equal(loading.children[1].children[2].textContent,'Waiting for Power BI…');
+  assert.equal(loading.children[1].children[0].textContent,'Working on your question…');
+  ui.input.value='Next draft';
+  loading.children[2].handlers.click();
+  await running;
+  assert.equal(ui.pendingQuestion,undefined);
+  assert.equal(loading.removed,true);
+  const notice=ui.messages.children.at(-1);
+  assert.equal(notice.children[1].textContent,'Retry');
+  let retryArgs; ui.submit=(...args)=>{retryArgs=args};
+  notice.children[1].handlers.click();
+  assert.deepEqual(retryArgs,['Rent by Year',true,false,true]);
+  assert.equal(ui.input.value,'Next draft');
+ } finally {global.document=originalDocument;}
+})().catch(error=>{console.error(error);process.exitCode=1});
+
+{
+ const {comparisonHeading,comparisonPartner}=require('../.tmp/test/qna/comparisonLayout');
+ assert.deepEqual(comparisonHeading('2024 · Rent Measure'),{group:'2024',leaf:'Rent Measure'});
+ assert.deepEqual(comparisonHeading('June 2025 YTD'),{group:'2025',leaf:'June · YTD'});
+ assert.equal(comparisonPartner(['Tenant','2024 Rent Measure','2024 Sales Measure','2025 Rent Measure','2025 Sales Measure'],3),1);
+ assert.equal(comparisonPartner(['Tenant','2023 Rent','2024 Rent','2025 Rent'],3),undefined,'ambiguous baseline is not guessed');
+ assert.equal(comparisonPartner(['Tenant','June 2024','June 2025'],2),1);
+ assert.equal(comparisonPartner(['Tenant','June 2024 YTD','June 2025 YTD'],2),undefined);
+ const {GlobalQnaUi}=require('../.tmp/test/qna/ui');
+ const calculate=values=>GlobalQnaUi.prototype.evaluateFormula.call({},'([2025 Rent] - [2024 Rent]) / ABS([2024 Rent])',new Map(values));
+ assert.equal(calculate([['2025 Rent',120],['2024 Rent',100]]),.2);
+ assert.equal(calculate([['2025 Rent',-80],['2024 Rent',-100]]),.2);
+ assert.throws(()=>calculate([['2025 Rent',120],['2024 Rent',0]]),/Division by zero/);
+}
+
+{
+ const {formatPowerBiValue}=require('../.tmp/test/dataAdapter');
+ assert.equal(formatPowerBiValue(23276199,'0'),new Intl.NumberFormat(undefined,{maximumFractionDigits:0}).format(23276199));
+ assert.equal(formatPowerBiValue(1234.5,'$#,##0.00'),'$'+new Intl.NumberFormat(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}).format(1234.5));
+ assert.equal(formatPowerBiValue(.125,'0.0%'),new Intl.NumberFormat(undefined,{minimumFractionDigits:1,maximumFractionDigits:1}).format(12.5)+'%');
+ const {GlobalQnaUi}=require('../.tmp/test/qna/ui');
+ assert.equal(GlobalQnaUi.prototype.color(0,'Sales Measure'),GlobalQnaUi.prototype.color(3,'Sales Measure'),'measure color survives series reordering');
+}

@@ -20,7 +20,7 @@ export class GlobalQnaEngine {
         if (response.chart) response.chart.backgroundFields = backgroundFields;
         return response;
     }
-    private layoutSettings: QnaLayoutSettings = { conversationMode: "history", cardinalityFallbackEnabled: true, cardinalityMatrixThresholdPct: 25, cardinalityMaxColumnValues: 5, cardinalityLowToHighHierarchy: true };
+    private layoutSettings: QnaLayoutSettings = { conversationMode: "latest", cardinalityFallbackEnabled: true, cardinalityMatrixThresholdPct: 25, cardinalityMaxColumnValues: 5, cardinalityLowToHighHierarchy: true };
     private dashboardDateRange: { start: number; end: number } | null = null;
     private termCandidates: Array<{ label: string; lower: string; kind: "measure" | "field" | "value" }> | null = null;
     private autocompleteItems = new Map<string, QnaAutocompleteItem[]>();
@@ -133,10 +133,10 @@ export class GlobalQnaEngine {
     }
 
     autocomplete(query: string, limit = 12, contextText = query): QnaAutocompleteItem[] {
-        const searchAll = /^\s*@/.test(query); const q = norm(query.replace(/^\s*@/, ""));
-        const cacheKey = searchAll ? "all" : "enabled"; let items = this.autocompleteItems.get(cacheKey);
+        const q = norm(query.replace(/^\s*@/, ""));
+        const cacheKey = "enabled"; let items = this.autocompleteItems.get(cacheKey);
         const enabledMeasures = this.layoutSettings.autocompleteMeasures; const enabledFields = this.layoutSettings.autocompleteFields;
-        if (!items) { items = []; this.context.measures.filter((measure) => searchAll || enabledMeasures === undefined || enabledMeasures.includes(measure.name)).forEach((measure) => { items!.push({ label: measure.name, detail: "Measure" }); if (!/^(?:sum|total|average|avg|minimum|min|maximum|max|count)\b/i.test(measure.name)) { items!.push({ label: `Sum of ${measure.name}`, detail: "Measure" }, { label: `Average ${measure.name}`, detail: "Measure" }); } }); this.context.fields.filter((field) => searchAll || enabledFields === undefined || enabledFields.includes(field.name)).forEach((field) => { items!.push({ label: field.name, detail: "Field" }); field.uniqueValues.slice(0, 100).forEach((value) => items!.push({ label: value.label, detail: field.name })); }); [...this.context.fields, ...this.context.measures].forEach((entity) => this.configuredAliases(entity.name).forEach((alias) => items!.push({ label: alias, detail: `Synonym for ${entity.name}` }))); this.autocompleteItems.set(cacheKey, items); }
+        if (!items) { items = []; this.context.measures.filter((measure) => enabledMeasures === undefined || enabledMeasures.includes(measure.name)).forEach((measure) => { items!.push({ label: measure.name, detail: "Measure" }); if (!/^(?:sum|total|average|avg|minimum|min|maximum|max|count)\b/i.test(measure.name)) { items!.push({ label: `Sum of ${measure.name}`, detail: "Measure" }, { label: `Average ${measure.name}`, detail: "Measure" }); } }); this.context.fields.filter((field) => enabledFields === undefined || enabledFields.includes(field.name)).forEach((field) => { items!.push({ label: field.name, detail: "Field" }); field.uniqueValues.slice(0, 100).forEach((value) => items!.push({ label: value.label, detail: field.name })); }); [...this.context.fields, ...this.context.measures].forEach((entity) => this.configuredAliases(entity.name).forEach((alias) => items!.push({ label: alias, detail: this.context.measures.some(measure => measure.name === entity.name) ? "Measure" : "Field", originalName: entity.name }))); this.autocompleteItems.set(cacheKey, items); }
         items = items.slice();
         const visualContext = norm(contextText.replace(/\bas\b.*$/i, "")); const mentions = (name: string) => { const normalized = norm(name); const short = normalized.replace(/^(?:sum|total|average|avg|minimum|min|maximum|max|count|distinct count)\s+(?:of\s+)?/, ""); return !!visualContext && (visualContext.includes(normalized) || (!!short && visualContext.includes(short))); }; const mentionedMeasures = this.context.measures.filter((measure) => mentions(measure.name)); const mentionedFields = this.context.fields.filter((field) => mentions(field.name)); const temporal = mentionedFields.some((field) => /\b(?:date|time|year|quarter|month|week|day)\b/i.test(field.name)); const targetContext = mentionedMeasures.some((measure) => /\b(?:target|budget|goal)\b/i.test(measure.name)); let visualLabels: string[]; if (!mentionedMeasures.length && mentionedFields.length) visualLabels = ["as a table", "as a matrix"]; else if (mentionedMeasures.length && !mentionedFields.length) visualLabels = ["as a KPI", "as a table", ...(targetContext ? ["as a gauge", "as a bullet chart"] : [])]; else if (mentionedMeasures.length && mentionedFields.length) { visualLabels = ["as a table", ...(mentionedFields.length > 1 ? ["as a matrix", "as a heatmap", "as small multiples"] : []), "as a bar chart", "as a column chart", ...(temporal ? ["as a line chart", "as an area chart", "as a KPI trend", "as a sparkline"] : []), ...(mentionedFields.length === 1 ? ["as a pie chart", "as a donut chart", "as a treemap", "as a funnel chart"] : []), ...(mentionedFields.length > 1 || mentionedMeasures.length > 1 ? ["as a stacked bar chart", "as a stacked column chart", "as a combo chart"] : []), ...(mentionedMeasures.length > 1 ? ["as a scatter chart"] : [])]; } else visualLabels = ["as a table", "as a matrix", "as a bar chart", "as a column chart", "as a line chart", "as a heatmap", "as small multiples", "as a KPI trend", "as a sparkline"];
         const normalizedContext = norm(contextText); const hasCompletedVisual = visualLabels.some((label) => normalizedContext.endsWith(norm(label))); if (!hasCompletedVisual) visualLabels.forEach((label) => items.push({ label, detail: "Visual" }));
@@ -160,7 +160,7 @@ export class GlobalQnaEngine {
         const query = norm(search);
         const matches: Array<QnaAutocompleteItem & { score: number; order: number }> = [];
         let order = 0;
-        for (const field of scopedField ? [scopedField] : this.context.fields) for (const value of field.uniqueValues) {
+        for (const field of (scopedField ? [scopedField] : this.context.fields).filter(field => this.layoutSettings.autocompleteFields === undefined || this.layoutSettings.autocompleteFields.includes(field.name))) for (const value of field.uniqueValues) {
             const label = norm(value.label);
             const score = !query ? 1 : label === query ? 10 : label.startsWith(query) ? 8 : label.includes(query) ? 6 : -1;
             if (score >= 0) matches.push({ label: value.label, detail: field.name, score, order: order++ });
@@ -170,10 +170,10 @@ export class GlobalQnaEngine {
 
     measureAutocomplete(search: string, limit = 12): QnaAutocompleteItem[] {
         const query = norm(search);
-        return this.context.measures.map((measure, order) => {
-            const label = norm(measure.name);
+        return this.context.measures.flatMap(measure => [...(this.layoutSettings.autocompleteMeasures === undefined || this.layoutSettings.autocompleteMeasures.includes(measure.name) ? [{label: measure.name, detail: "Measure"}] : []), ...this.configuredAliases(measure.name).map(label => ({label, detail: "Measure", originalName: measure.name}))]).map((item, order) => {
+            const label = norm(item.label);
             const score = !query ? 1 : label === query ? 10 : label.startsWith(query) ? 8 : label.includes(query) ? 6 : -1;
-            return { item: { label: measure.name, detail: "Measure" } as QnaAutocompleteItem, score, order };
+            return { item, score, order };
         }).filter((match) => match.score >= 0).sort((a, b) => b.score - a.score || a.order - b.order).slice(0, limit).map((match) => match.item);
     }
 
@@ -248,7 +248,7 @@ export class GlobalQnaEngine {
         const explicitField = explicitFields[0];
         const periodComparison = measure && this.periodComparison(q, explicitFields, measure, aggregation, matchedValues);
         if (periodComparison) return periodComparison;
-        const fieldListRequest = explicitFields.length > 0 && !explicitMeasures.length && !chartType && !ranking && !/\b(?:how many|count|number of|compare|comparison|versus|vs)\b/.test(q);
+        const fieldListRequest = explicitFields.length > 0 && !explicitMeasures.length && (!this.layoutSettings.defaultMeasure || /\blist\b/.test(q)) && !chartType && !ranking && !/\b(?:how many|count|number of|compare|comparison|versus|vs)\b/.test(q);
         if (fieldListRequest) return this.dimensionList(explicitFields, this.scopeIndices(matchedValues));
         let field = explicitField;
         if (explicitFields.length > 1 && measures.length) {
@@ -304,6 +304,10 @@ export class GlobalQnaEngine {
 
     private resolveMeasures(q: string, fallbackToOnlyMeasure = true): QnaMeasure[] {
         const matches = this.nonOverlappingMentions(q, this.context.measures.map((measure) => ({ item: measure, keys: Array.from(new Set([...measureAliases(measure.name), ...this.configuredAliases(measure.name)])) })));
+        if (!matches.length && fallbackToOnlyMeasure && !/\blist\b/.test(q) && this.layoutSettings.defaultMeasure) {
+            const selected = this.context.measures.find(measure => measure.name === this.layoutSettings.defaultMeasure);
+            if (selected) return [selected];
+        }
         return matches.length ? Array.from(new Map(matches.map((measure) => [measure.key, measure])).values()) : (fallbackToOnlyMeasure && this.context.measures.length === 1 ? [this.context.measures[0]] : []);
     }
 
@@ -436,19 +440,32 @@ export class GlobalQnaEngine {
         const rows = Array.from(groups.values()).sort((a, b) => { for (let index = 0; index < rowFields.length; index++) { const result = this.compareFieldLabels(rowFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; });
         const monthOrder = (label: string) => { const names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]; const value = norm(label); const named = names.findIndex((name) => name === value || name.startsWith(value.slice(0, 3))); if (named >= 0) return named + 1; return Number(value.match(/\b(?:1[0-2]|0?[1-9])\b/)?.[0] || 12); };
         const ytdGroups = periodGroups.map((period) => { const yearSet = new Set(period.year.indices); const targetMonth = period.month ? monthOrder(period.month.label) : 12; return baseScope.filter((index) => yearSet.has(index) && (!monthField || monthOrder(monthField.values[index]) <= targetMonth)); });
+        const ttmGroups = periodGroups.map((period) => {
+            const targetYear = Number(String(period.year.label).match(/\b\d{4}\b/)?.[0]);
+            const targetMonth = period.month ? monthOrder(period.month.label) : 12;
+            if (!monthField || !Number.isFinite(targetYear)) return ytdGroups[periodGroups.indexOf(period)];
+            const targetOrdinal = targetYear * 12 + targetMonth - 1;
+            return baseScope.filter((index) => {
+                const rowYear = Number(String(yearField.values[index] || "").match(/\b\d{4}\b/)?.[0]);
+                if (!Number.isFinite(rowYear)) return false;
+                const rowOrdinal = rowYear * 12 + monthOrder(monthField.values[index]) - 1;
+                return rowOrdinal <= targetOrdinal && rowOrdinal > targetOrdinal - 12;
+            });
+        });
         const intersections = rows.map((row) => { const rowSet = new Set(row.indices); return periodGroups.map((period) => period.indices.filter((index) => rowSet.has(index))); });
         const ytdIntersections = rows.map((row) => { const rowSet = new Set(row.indices); return ytdGroups.map((period) => period.filter((index) => rowSet.has(index))); });
-        const formattedRows = rows.map((row, rowIndex) => [row.labels.join(" > "), ...periodGroups.flatMap((_, periodIndex) => [intersections[rowIndex][periodIndex], ytdIntersections[rowIndex][periodIndex]].map((indices) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation)))]);
+        const ttmIntersections = rows.map((row) => { const rowSet = new Set(row.indices); return ttmGroups.map((period) => period.filter((index) => rowSet.has(index))); });
+        const formattedRows = rows.map((row, rowIndex) => [row.labels.join(" > "), ...periodGroups.flatMap((_, periodIndex) => [intersections[rowIndex][periodIndex], ytdIntersections[rowIndex][periodIndex], ttmIntersections[rowIndex][periodIndex]].map((indices) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation)))]);
         const selectedScope = Array.from(new Set(periodGroups.flatMap((period) => period.indices))).filter((index) => baseSet.has(index));
-        if (rowFields.length) formattedRows.push(["Grand Total", ...periodGroups.flatMap((period, index) => [period.indices, ytdGroups[index]].map((indices) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation)))]);
+        if (rowFields.length) formattedRows.push(["Grand Total", ...periodGroups.flatMap((period, index) => [period.indices, ytdGroups[index], ttmGroups[index]].map((indices) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation)))]);
         const rowIndices = [...rows.map((row, rowIndex) => Array.from(new Set(intersections[rowIndex].flat()))), ...(rowFields.length ? [selectedScope] : [])];
         const periodFieldNames = [...(monthField && periodGroups.some((period) => period.month) ? [monthField.name] : []), yearField.name]; const rowFieldNames = rowFields.map((field) => field.name);
-        const cellIndices = rows.map((row, rowIndex) => [rowIndices[rowIndex], ...periodGroups.flatMap((_, periodIndex) => [intersections[rowIndex][periodIndex], ytdIntersections[rowIndex][periodIndex]])]); if (rowFields.length) cellIndices.push([selectedScope, ...periodGroups.flatMap((period, index) => [period.indices, ytdGroups[index]])]);
-        const selectionFieldsByColumn = [rowFieldNames, ...periodGroups.flatMap(() => [[...rowFieldNames, ...periodFieldNames], [...rowFieldNames, ...periodFieldNames]])];
+        const cellIndices = rows.map((row, rowIndex) => [rowIndices[rowIndex], ...periodGroups.flatMap((_, periodIndex) => [intersections[rowIndex][periodIndex], ytdIntersections[rowIndex][periodIndex], ttmIntersections[rowIndex][periodIndex]])]); if (rowFields.length) cellIndices.push([selectedScope, ...periodGroups.flatMap((period, index) => [period.indices, ytdGroups[index], ttmGroups[index]])]);
+        const selectionFieldsByColumn = [rowFieldNames, ...periodGroups.flatMap(() => [[...rowFieldNames, ...periodFieldNames], [...rowFieldNames, ...periodFieldNames], [...rowFieldNames, ...periodFieldNames]])];
         const rowTitle = rowFields.length ? rowFields.map((field) => field.name).join(" > ") : "Comparison";
-        const columns = [rowTitle, ...periodGroups.flatMap((period) => [period.label, `${period.label} YTD`])]; const hiddenColumns = periodGroups.map((_, index) => 2 + index * 2); const ytdColumns = periodGroups.map((_, index) => ({ sourceColumn: 1 + index * 2, ytdColumn: 2 + index * 2 }));
+        const columns = [rowTitle, ...periodGroups.flatMap((period) => [period.label, `${period.label} YTD`, `${period.label} TTM`])]; const hiddenColumns = periodGroups.flatMap((_, index) => [2 + index * 3, 3 + index * 3]); const ytdColumns = periodGroups.map((_, index) => ({ sourceColumn: 1 + index * 3, ytdColumn: 2 + index * 3 })); const ttmColumns = periodGroups.map((_, index) => ({ sourceColumn: 1 + index * 3, ttmColumn: 3 + index * 3 }));
         const text = comparisonRequest ? `${this.aggregationLabel(aggregation)} ${measure.name} comparison by ${rowTitle}.` : `${this.aggregationLabel(aggregation)} ${measure.name} by ${rowTitle} for ${uniquePeriods[0].label}.`;
-        return { text, table: { columns, rows: formattedRows, rowIndices, cellIndices, selectionFieldsByColumn, hiddenColumns, ytdColumns } };
+        return { text, table: { columns, rows: formattedRows, rowIndices, cellIndices, selectionFieldsByColumn, hiddenColumns, ytdColumns, ttmColumns } };
     }
 
     private dateValues(): Array<{ index: number; time: number }> { if (this.cachedDateValues) return this.cachedDateValues; const field = this.context.fields.find((item) => /(^|\s)date($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)month($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)year($|\s)/i.test(item.name)); if (!field) return this.cachedDateValues = []; const values: Array<{ index: number; time: number }> = []; for (let index = 0; index < field.values.length; index++) { const text = String(field.values[index] || "").trim(); const normalized = /^\d{4}-\d{2}$/.test(text) ? `${text}-01` : /^\d{4}$/.test(text) ? `${text}-01-01` : text; const time = new Date(normalized).getTime(); if (Number.isFinite(time)) values.push({ index, time }); } return this.cachedDateValues = values; }
@@ -487,7 +504,7 @@ export class GlobalQnaEngine {
         const rows = groups.map((group) => ({ ...group, value: measure ? this.aggregate(measure, group.indices, aggregation) : group.indices.length }));
         rows.sort((a, b) => ranking ? (ranking.direction === "top" ? b.value - a.value : a.value - b.value) : this.compareFieldLabels(field, a.label, b.label));
         const chartLimit = chartType && rows.length > 15 ? 15 : rows.length;
-        if (chartType && !ranking && rows.length > 15) rows.sort((a, b) => b.value - a.value);
+        if (chartType && !ranking && rows.length > 15 && !/\b(?:year|month|date)\b/i.test(field.name)) rows.sort((a, b) => b.value - a.value);
         const limited = ranking ? rows.slice(0, ranking.limit) : rows.slice(0, chartLimit);
         const metricName = measure ? `${this.aggregationLabel(aggregation)} ${measure.name}` : "Count";
         const valueLabel = (value: number) => measure ? this.formatAggregate(measure, value, aggregation) : value.toLocaleString();
@@ -524,7 +541,7 @@ export class GlobalQnaEngine {
         if (ranking) rows.sort((a, b) => ranking.direction === "top" ? b.values[0] - a.values[0] : a.values[0] - b.values[0]);
         else rows.sort((a, b) => { for (let index = 0; index < fields.length; index++) { const result = this.compareFieldLabels(fields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; });
         const pivotChart = !!chartType && !ranking && fields.length === 2 && measures.length === 1;
-        if (chartType && !ranking && !pivotChart && rows.length > 15) rows.sort((a, b) => b.values[0] - a.values[0]);
+        if (chartType && !ranking && !pivotChart && rows.length > 15 && !fields.some(field=>/\b(?:year|month|date)\b/i.test(field.name))) rows.sort((a, b) => b.values[0] - a.values[0]);
         rows = rows.slice(0, ranking?.limit || (chartType && !pivotChart ? 15 : rows.length));
         const title = `${measures.map((measure) => measure.name).join(" vs ")} by ${fields.map((field) => field.name).join(" and ")}`;
         const rowIndices = rows.map((row) => row.indices); const labels = rows.map((row) => row.labels.join(" · "));
@@ -538,13 +555,13 @@ export class GlobalQnaEngine {
                 const measure = measures[0];
                 const pivotSeries = seriesLabels.map((seriesLabel) => {
                     const values = axisLabels.map((axisLabel) => rows.find((row) => row.labels[axisIndex] === axisLabel && row.labels[seriesIndex] === seriesLabel)?.values[0] || 0);
-                    return { name: seriesLabel, values, valueLabels: values.map((value) => this.formatAggregate(measure, value, aggregation)) };
+                    return { name: seriesLabel, values, valueLabels: axisLabels.map((axisLabel,index) => rows.some(row=>row.labels[axisIndex]===axisLabel && row.labels[seriesIndex]===seriesLabel) ? this.formatAggregate(measure, values[index], aggregation) : "—"), rowIndices: axisLabels.map(axisLabel=>rows.find(row=>row.labels[axisIndex]===axisLabel && row.labels[seriesIndex]===seriesLabel)?.indices || []) };
                 });
                 const pivotRowIndices = axisLabels.map((axisLabel) => Array.from(new Set(rows.filter((row) => row.labels[axisIndex] === axisLabel).flatMap((row) => row.indices))));
                 return { text: `${title}.`, chart: { type: chartType, title, axisTitle: fields[axisIndex].name, labels: axisLabels, values: pivotSeries[0]?.values || [], valueLabels: pivotSeries[0]?.valueLabels || [], rowIndices: pivotRowIndices, series: pivotSeries, totalLabel: this.formatAggregate(measure, rows.reduce((sum, row) => sum + row.values[0], 0), aggregation), valueFormat: measure.formatString, formatHint: measure.formatHint } };
             }
             const series = measures.length > 1 ? measures.map((measure, measureIndex) => ({ name: measure.name, values: rows.map((row) => row.values[measureIndex]), valueLabels: rows.map((row) => this.formatAggregate(measure, row.values[measureIndex], aggregation)) })) : undefined;
-            return { text: `${title}.`, chart: { type: chartType, title, axisTitle: fields.map((field) => field.name).join(" · "), labels, values: rows.map((row) => row.values[0]), valueLabels: rows.map((row) => this.formatAggregate(measures[0], row.values[0], aggregation)), rowIndices, series, totalLabel: measures.length === 1 ? this.formatAggregate(measures[0], rows.reduce((sum, row) => sum + row.values[0], 0), aggregation) : undefined, valueFormat: measures.length === 1 ? measures[0].formatString : undefined, formatHint: measures.length === 1 ? measures[0].formatHint : undefined } };
+            return { text: `${title}.`, chart: { type: chartType, title, groupNames: fields.map(field => field.name), groupValues: rows.map(row => row.labels), axisTitle: fields.map((field) => field.name).join(" · "), labels, values: rows.map((row) => row.values[0]), valueLabels: rows.map((row) => this.formatAggregate(measures[0], row.values[0], aggregation)), rowIndices, series, totalLabel: measures.length === 1 ? this.formatAggregate(measures[0], rows.reduce((sum, row) => sum + row.values[0], 0), aggregation) : undefined, valueFormat: measures.length === 1 ? measures[0].formatString : undefined, formatHint: measures.length === 1 ? measures[0].formatHint : undefined } };
         }
         const tableRows = rows.map((row) => [...row.labels, ...row.values.map((value, index) => this.formatAggregate(measures[index], value, aggregation))]);
         if (rows.length) { const totalIndices = scope.slice(); tableRows.push([...fields.map((_, index) => index === 0 ? "Grand Total" : ""), ...measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, totalIndices, aggregation), aggregation))]); rowIndices.push(totalIndices); }

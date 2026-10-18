@@ -1,0 +1,24 @@
+const assert=require('node:assert/strict');
+const {createPdfReport}=require('../.tmp/test/qna/pdfExport');
+const drawn=[];
+const pixel='data:image/png;base64,'+Buffer.from(require('fast-png').encode({width:1,height:1,data:new Uint8Array([255,255,255,255]),channels:4})).toString('base64');
+global.document={createElement(){return {getContext(){const canvas=this;return {scale(){},fillRect(){},fillText(text,x,y){assert(y<canvas.height/2);drawn.push(text)},measureText(text){return {width:text.length*6}}}},toDataURL(){return pixel}}}};
+(async()=>{
+ const report=await createPdfReport({title:'Tenant list',columns:['Tenant','Rent'],rows:Array.from({length:150},(_,i)=>['Tenant '+i,String(i)])});
+ assert(report.pages.length>1);
+ assert(Buffer.from(report.base64,'base64').toString('ascii').startsWith('%PDF-'));
+ assert(drawn.includes('Tenant 149'),'export includes rows beyond the viewport');
+ assert(drawn.filter(text=>text==='Tenant').length>1,'repeat column headings');
+ await createPdfReport({title:'Filtered totals',notes:'Answer filters: City: Riyadh\nDisplay filters: Tenant: Tech Hub',columns:['Tenant','Rent'],rows:[['Tech Hub','71,820'],['Grand Total','460,849']],totalRowIndices:[1]});
+ assert(drawn.includes('Grand Total'),'PDF includes the supplied grand total');
+ assert(drawn.includes('460,849'),'PDF preserves the model total instead of summing displayed details');
+ assert(drawn.some(text=>text.includes('City: Riyadh')),'PDF includes answer filters');
+ assert(drawn.some(text=>text.includes('Display filters: Tenant: Tech Hub')),'PDF includes display filters');
+ const portrait=await createPdfReport({title:'Portrait',orientation:'portrait',columns:['Tenant','Rent'],rows:Array.from({length:150},(_,i)=>['Portrait tenant '+i,String(i)])});
+ const pageSize=pdf=>Buffer.from(pdf.base64,'base64').toString('latin1').match(/\/MediaBox\s*\[0 0 ([\d.]+) ([\d.]+)\]/).slice(1).map(Number);
+ const [pw,ph]=pageSize(portrait), [lw,lh]=pageSize(report);
+ assert(pw<ph && lw>lh,'PDF page orientation matches the selection');
+ assert(portrait.pages.length>1 && drawn.includes('Portrait tenant 149'),'portrait pagination retains all rows');
+ await assert.rejects(createPdfReport({title:'empty'}),/no result/);
+ console.log('PDF pagination and document generation passed.');
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Assigned Tenant Name",
+    "table": "askBICS_Sample_Retail_Data",
+    "column": "Assigned Tenant Name",
+    "type": "text",
+    "aliases": ["Tenant"],
+    "values": ["Home Living", "Bean Street"]
+  },
+  {
+    "name": "City",
+    "table": "askBICS_Sample_Retail_Data",
+    "column": "City",
+    "type": "text",
+    "values": ["Dammam", "Jeddah", "Riyadh"]
+  },
+  {
+    "name": "Year",
+    "table": "askBICS_Sample_Retail_Data",
+    "column": "Year",
+    "type": "number"
+  }
+]

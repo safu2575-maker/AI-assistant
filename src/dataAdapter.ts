@@ -44,7 +44,7 @@ export function formatPowerBiValue(value: number, formatString = "", formatHint:
     const scaled = percentage ? value * 100 : value;
     const prefix = positivePattern.slice(0, positivePattern.indexOf(placeholder)).replace(/"([^"]*)"/g, "$1").replace(/\\(.)/g, "$1").trim();
     const suffix = positivePattern.slice(positivePattern.indexOf(placeholder) + placeholder.length).replace(/"([^"]*)"/g, "$1").replace(/\\(.)/g, "$1").replace(/%/g, "").trim();
-    const formatted = numberFormatter(compact && !percentage ? { notation: "compact", maximumFractionDigits: Math.max(1, decimals) } : { useGrouping: !placeholder || placeholder.includes(","), minimumFractionDigits: requiredDecimals, maximumFractionDigits: decimals }).format(scaled);
+    const formatted = numberFormatter(compact && !percentage ? { notation: "compact", maximumFractionDigits: Math.max(1, decimals) } : { useGrouping: true, minimumFractionDigits: requiredDecimals, maximumFractionDigits: decimals }).format(scaled);
     const signWrapped = value < 0 && String(formatString).split(";")[1]?.includes("(") ? `(${formatted.replace(/^-/, "")})` : formatted;
     return `${prefix}${signWrapped}${percentage ? "%" : suffix}`;
 }

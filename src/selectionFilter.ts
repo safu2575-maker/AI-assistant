@@ -1,5 +1,5 @@
 import powerbi from "powerbi-visuals-api";
-import { BasicFilter, IBasicFilter, IdentityFilter, IFilterTarget } from "powerbi-models";
+import { AdvancedFilter, BasicFilter, IFilter, IdentityFilter, IFilterTarget, TupleFilter } from "powerbi-models";
 
 // All answer types use the same toggle semantics, including period and YTD cells.
 export function toggleSelection(current: number[], incoming: number[], additive: boolean): number[] {
@@ -74,8 +74,9 @@ export function resolveFilterTarget(column: powerbi.DataViewMetadataColumn): IFi
 export function applySelectionFilter(
     host: Pick<powerbi.extensibility.visual.IVisualHost, "applyJsonFilter">,
     indices: number[],
-    filters: IBasicFilter[],
-    _tuples?: Array<Array<string | number | boolean>>
+    filters: IFilter[],
+    tuples?: Array<Array<string | number | boolean>>,
+    preserveTuples = false
 ): void {
     const properties = ["filter", "filter2", "filter3", "filter4", "filter5", "filter6", "filter7", "filter8"];
     const clear = (propertyName: string) => {
@@ -86,6 +87,11 @@ export function applySelectionFilter(
     properties.slice(1).forEach(clear);
     if (!indices.length) {
         clear("filter");
+    } else if (preserveTuples && filters.length > 1 && tuples?.length) {
+        clear("filter");
+        const uniqueTuples = Array.from(new Map(tuples.map((tuple) => [JSON.stringify(tuple), tuple])).values());
+        const tupleFilter = new TupleFilter(filters.map((filter) => filter.target as IFilterTarget), "In", uniqueTuples.map((tuple) => tuple.map((value) => ({ value }))));
+        host.applyJsonFilter(tupleFilter.toJSON(), "general", "filter", powerbi.FilterAction.merge);
     } else if (filters.length) {
         // Replace a previous identity filter instead of merging a different filter
         // type into the same property and leaving the old row selection behind.
@@ -96,4 +102,21 @@ export function applySelectionFilter(
     } else {
         host.applyJsonFilter(new IdentityFilter(indices, "In").toJSON(), "general", "filter", powerbi.FilterAction.merge);
     }
+}
+
+/** Exact union of day intervals: outer bounds AND exclusion of every gap.
+ * Keeps date comparisons as date predicates, including times within each day.
+ */
+export function dateSelectionFilters(target: IFilterTarget, values: string[]): IFilter[] {
+    const times = [...new Set(values.map(value => Date.parse(value)))].sort((a,b) => a-b);
+    if (!times.length || times.some(value => !Number.isFinite(value))) throw new Error("Invalid date selection.");
+    const ranges: Array<{start: number; end: number}> = [];
+    for (const time of times) {
+        const last = ranges.at(-1);
+        if (last && last.end === time) last.end += 86400000;
+        else ranges.push({start: time, end: time + 86400000});
+    }
+    const iso = (time: number) => new Date(time).toISOString();
+    return [new AdvancedFilter(target, "And", {operator: "GreaterThanOrEqual", value: iso(ranges[0].start)}, {operator: "LessThan", value: iso(ranges.at(-1)!.end)}).toJSON(),
+        ...ranges.slice(1).map((range,index) => new AdvancedFilter(target, "Or", {operator: "LessThan", value: iso(ranges[index].end)}, {operator: "GreaterThanOrEqual", value: iso(range.start)}).toJSON())];
 }
