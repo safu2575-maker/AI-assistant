@@ -1,0 +1,82 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import { randomBytes } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { tableFromArrays, RecordBatchStreamWriter, compressionRegistry, CompressionType } from 'apache-arrow';
+import { metadataRows, modelFromMetadata, validateConnection, verifyConnection } from '../src/connections.js';
+import { mountTab } from '../src/tab.js';
+import { demoModel } from '../src/model.js';
+const sample = { ...demoModel, datasetId: '11111111-1111-1111-1111-111111111111' };
+const target = { name: 'Manager sales', datasetId: '22222222-2222-2222-2222-222222222222', workspaceId: 'me', measures: [{ name: 'Sales', modelName: 'Total Sales' }], dimensions: [{ name: 'City', table: 'Stores', column: 'City', type: 'text' }] };
+test('decodes compressed metadata and rejects trailing HTTP-200 error rowsets', async () => {
+  const lz4 = createRequire(import.meta.url)('lz4js');
+  compressionRegistry.set(CompressionType.LZ4_FRAME, { encode: lz4.compress, decode: lz4.decompress });
+  const table = tableFromArrays({ '[Kind]': ['measure', 'column'], '[Name]': ['Sales', 'City'], '[Table]': ['Sales', 'Stores'], '[Type]': ['Decimal', 'Text'], '[Format]': ['#,0.00', ''] });
+  const bytes = await RecordBatchStreamWriter.writeAll(table, { compressionType: CompressionType.LZ4_FRAME }).toUint8Array();
+  const rows = await metadataRows(new Response(bytes as any));
+  assert.equal(rows[0].Name, 'Sales');
+  const m = modelFromMetadata('Sales', target.datasetId, 'me', rows); assert.equal(m.dimensions[0].type, 'text'); assert.equal(m.measures[0].formatString, '#,0.00');
+  const error = tableFromArrays({ ErrorMessage: ['Permission denied'] }); error.schema.metadata.set('IsError', 'true');
+  const errorBytes = await RecordBatchStreamWriter.writeAll(error).toUint8Array();
+  await assert.rejects(metadataRows(new Response(Buffer.concat([bytes, errorBytes]))), /Automatic field discovery/);
+  await assert.rejects(metadataRows(new Response('not arrow')), /Automatic field discovery/);
+});
+test('validates names and types; identifier checks escape DAX instead of accepting expressions', async () => {
+  assert.throws(() => validateConnection({ ...target, datasetId: '../other' }));
+  assert.throws(() => validateConnection({ ...target, measures: [] }));
+  assert.throws(() => validateConnection({ ...target, dimensions: [{ ...target.dimensions[0], name: 'sales' }] }));
+  assert.throws(() => validateConnection({ ...target, time: { dateField: 'City' } }));
+  const m = validateConnection({ ...target, measures: [{ name: 'Safe', modelName: 'X] EVALUATE Secrets' }] });
+  await verifyConnection(m, 'user', (async (_url, init) => {
+    assert.equal((init?.headers as any).Authorization, 'Bearer user');
+    assert.match(String(init?.body), /X\]\] EVALUATE Secrets\]/);
+    return Response.json({ results: [{ tables: [{ rows: [{ '[Check0]': 0 }] }] }] });
+  }) as typeof fetch);
+});
+test('connections are private, persisted, revalidated and model-scoped; switching rejects pending work', async () => {
+  const previousKey = process.env.STATE_KEY; process.env.STATE_KEY = randomBytes(32).toString('hex');
+  const app = express(); let deny = false;
+  const calls: Array<{ url: string; token: string }> = [];
+  const fetcher = (async (url, init) => {
+    calls.push({ url: String(url), token: (init?.headers as any).Authorization });
+    if (deny) return new Response('', { status: 403 });
+    return Response.json({ results: [{ tables: [{ rows: [{ '[Check0]': 0 }] }] }] });
+  }) as typeof fetch;
+  const directory = await mkdtemp(join(tmpdir(), 'askbics-connections-'));
+  const state = mountTab(app, { clientId: 'client', tenantId: 'tenant', clientSecret: 'secret', model: sample }, 'https://test.example', fetcher, directory);
+  const identity = randomBytes(12).toString('hex');
+  const add = (id: string, user: string) => state.sessions.set(id, { token: `${user}-token`, expires: Date.now()+60000, busy: false, lastSearch: 0, identity: user, model: sample, userKey: `${user}:${sample.datasetId}` });
+  add('alice', identity); add('bob', `${identity}-bob`);
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(r => server.once('listening', r));
+  const post = (path: string, body = {}, id = 'alice') => fetch(`http://127.0.0.1:${(server.address() as any).port}/ask/api/${path}`, { method: 'POST', headers: { Origin: 'https://test.example', 'Content-Type': 'application/json', Authorization: `Bearer ${id}` }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await post('connect', { model: target })).status, 200);
+    assert.equal((await (await post('model')).json() as any).name, target.name);
+    assert.equal((await (await post('model', {}, 'bob')).json() as any).name, sample.name);
+    assert.equal((await post('select-connection', { datasetId: target.datasetId }, 'bob')).status, 400);
+    await post('state', { datasetId: target.datasetId, state: { savedReports: ['manager-only'] } });
+    await post('select-connection', { datasetId: sample.datasetId });
+    assert.equal((await (await post('state')).json() as any).state, null);
+    assert.equal((await post('state', { datasetId: target.datasetId, state: {} })).status, 400);
+    state.sessions.get('alice')!.queued = 1;
+    assert.equal((await post('select-connection', { datasetId: target.datasetId })).status, 409);
+    state.sessions.get('alice')!.queued = 0;
+    deny = true;
+    assert.equal((await post('select-connection', { datasetId: target.datasetId })).status, 400);
+    assert.equal(state.sessions.get('alice')!.model.datasetId, sample.datasetId);
+    deny = false; add('again', identity);
+    assert.equal((await (await post('connections', {}, 'again')).json() as any).connections.length, 2);
+    await post('select-connection', { datasetId: target.datasetId }, 'again');
+    assert.deepEqual((await (await post('state', {}, 'again')).json() as any).state.savedReports, ['manager-only']);
+    assert.equal((await post('disconnect', { datasetId: target.datasetId }, 'again')).status, 400);
+    assert.equal(state.sessions.get('again')!.model.datasetId, target.datasetId);
+    await post('select-connection', { datasetId: sample.datasetId }, 'again');
+    assert.equal((await post('disconnect', { datasetId: target.datasetId }, 'again')).status, 200);
+    assert.equal(state.sessions.get('again')!.model.datasetId, sample.datasetId);
+    assert.ok(calls.every(c => c.token === `Bearer ${identity}-token`));
+  } finally { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await rm(directory, { recursive: true, force: true }); if (previousKey) process.env.STATE_KEY = previousKey; else delete process.env.STATE_KEY; }
+});

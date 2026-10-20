@@ -92,6 +92,9 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         this.ui.cancelDataSettings = () => this.parameterTrial.cancelSettings();
         this.ui.measureOptions = () => this.parameterTrial.measureOptions();
         this.parameterTrial.defaultMeasure = () => this.engine.getLayoutSettings().defaultMeasure;
+        this.parameterTrial.startup = () => this.engine.getLayoutSettings().startup;
+        this.ui.onStartupChanged = () => this.parameterTrial.applyStartup();
+        this.parameterTrial.revenue = () => this.engine.getLayoutSettings().revenue;
         this.parameterTrial.additiveMeasures = () => this.engine.getLayoutSettings().additiveMeasures || [];
         this.ui.groupingOptions = () => this.parameterTrial.groupingOptions();
         this.ui.valueOptions = () => this.parameterTrial.valueOptions();
@@ -139,7 +142,8 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
             this.ui.updateEngine(this.engine, this.stateHydrated, this.restoringData || this.loadingSegments || hasMoreSegments);
         }
         if (restoredUiState) this.ui.restoreState(restoredUiState);
-        if (hasMoreSegments && !this.parameterTrial.dataRequestsStopped) {
+        this.parameterTrial.runStartup();
+        if (hasMoreSegments && !this.parameterTrial.dataRequestsStopped && (!this.parameterTrial.startupLoading || this.parameterTrial.startupAcceptsSegments(dataView))) {
             if (!this.host.fetchMoreData(true)) this.parameterTrial.fail("Power BI could not load the complete query result. Narrow the grouping or filters; no complete answer is available.");
         } else if (hasIncomingDataView) this.restoringData = false;
         this.loadingSegments = hasMoreSegments;

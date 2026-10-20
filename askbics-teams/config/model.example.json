@@ -1,0 +1,12 @@
+{
+  "name": "Your approved dataset",
+  "datasetId": "REPLACE_DATASET_GUID",
+  "measures": [
+    { "name": "Work items", "modelName": "Work Item Count", "aliases": ["items"] }
+  ],
+  "dimensions": [
+    { "name": "Team", "table": "Teams", "column": "Name", "aliases": ["teams"] },
+    { "name": "Year", "table": "Calendar", "column": "Year" }
+  ],
+  "year": { "table": "Calendar", "column": "Year" }
+}

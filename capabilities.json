@@ -13,18 +13,8 @@
   ],
   "dataViewMappings": [
     {
-      "conditions": [{ "fields": { "min": 1 }, "measures": { "max": 0 } }],
-      "table": {
-        "rows": {
-          "select": [{ "for": { "in": "fields" } }],
-          "dataReductionAlgorithm": { "window": { "count": 30000 } }
-        }
-      }
-    },
-    {
-      "conditions": [{ "fields": { "min": 1 }, "measures": { "min": 1 } }],
-      "matrix": {
-        "rows": {
+      "categorical": {
+        "categories": {
           "for": {
             "in": "fields"
           },
@@ -35,9 +25,13 @@
           }
         },
         "values": {
-          "for": {
-            "in": "measures"
-          }
+          "select": [
+            {
+              "for": {
+                "in": "measures"
+              }
+            }
+          ]
         }
       }
     }
@@ -154,7 +148,12 @@
       "displayName": "Model totals"
     }
   },
-  "privileges": [{ "name": "ExportContent", "essential": false }],
+  "privileges": [
+    {
+      "name": "ExportContent",
+      "essential": false
+    }
+  ],
   "supportsHighlight": true,
   "supportsMultiVisualSelection": true,
   "supportsEmptyDataView": true,

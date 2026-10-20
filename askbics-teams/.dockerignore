@@ -1,0 +1,11 @@
+node_modules
+.npm-cache
+dist
+.env
+data
+test-output
+.env.*
+test
+public
+appPackage
+README.md

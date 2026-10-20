@@ -60,6 +60,8 @@ export interface QnaLayoutSettings {
     autocompleteMeasures?: string[];
     defaultMeasure?: string;
     additiveMeasures?: string[];
+    startup?: { enabled: boolean; fields: string[]; measure: string };
+    revenue?: { field: string; value: string };
     synonyms?: Record<string, string[]>;
     synonymEnabled?: Record<string, boolean>;
 }

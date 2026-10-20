@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.npm-cache/
+.env
+.env.*
+!.env.example
+appPackage/manifest.json
+*.zip
+coverage/
+data/
+test-output/
+tab/visual.js
+tab/visual.css
+vendor/visual/src/visualQueryEngine.ts
+generated/

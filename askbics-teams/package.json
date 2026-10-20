@@ -1,0 +1,41 @@
+{
+  "name": "askbics-teams",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "description": "Isolated askBICS Teams pilot; independent of the Power BI visual",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "node scripts/build-visual.mjs && tsc -p tsconfig.json && tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler --skipLibCheck app/visual-client.ts app/model-service.ts",
+    "test": "npm run build && node dist/test/pilot.test.js && node dist/test/suggestions.test.js && node --test dist/test/connections.test.js dist/test/selected-model.test.js dist/test/remembered-session.test.js test/visual.test.mjs",
+    "demo": "npm run build && node dist/src/demo.js",
+    "start": "node --env-file=.env dist/src/teams.js",
+    "prepare:manifest": "npm run build && node --env-file=.env dist/src/prepare-manifest.js",
+    "check:config": "npm run build && node --env-file=.env dist/src/check-config.js",
+    "test:browser": "node test/browser.mjs",
+    "test:connections": "node test/connections-browser.mjs",
+    "test:sessions": "node test/session-browser.mjs"
+  },
+  "dependencies": {
+    "@microsoft/teams-js": "^2.58.0",
+    "@microsoft/teams.api": "2.1.1",
+    "@microsoft/teams.apps": "2.1.1",
+    "apache-arrow": "^21.2.0",
+    "express": "^4.22.3",
+    "jspdf": "^4.2.1",
+    "lz4js": "^0.2.0",
+    "powerbi-models": "^1.12.6"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "22.19.0",
+    "esbuild": "^0.28.2",
+    "less": "^4.9.1",
+    "node": "22.22.0",
+    "playwright-core": "^1.64.1",
+    "powerbi-visuals-api": "^5.11.1",
+    "typescript": "5.9.3"
+  }
+}

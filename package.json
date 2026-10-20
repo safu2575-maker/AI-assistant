@@ -13,7 +13,9 @@
     "package": "pbiviz package",
     "lint": "npx eslint .",
     "build": "tsc -p . --noEmit",
-    "test": "tsc -p . --rootDir src --outDir .tmp/test && node scripts/test.cjs && node scripts/test-parameter.cjs && node scripts/test-pdf.cjs && node scripts/test-chart-timeline.cjs"
+    "test": "tsc -p . --rootDir src --outDir .tmp/test && node scripts/test.cjs && node scripts/test-parameter.cjs && node scripts/test-pdf.cjs && node scripts/test-chart-timeline.cjs",
+    "build:all": "npm run build && npm --prefix askbics-teams run build && npm run package",
+    "test:all": "npm test && npm --prefix askbics-teams test"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

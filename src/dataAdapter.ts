@@ -5,7 +5,7 @@ export function categoricalAsTable(categorical: powerbi.DataViewCategorical | un
     if (!categorical) return undefined;
     const categories = categorical.categories || [];
     const values = Array.from(categorical.values || []);
-    const columns = [...categories.map((column) => column.source), ...values.map((column) => column.source)];
+    const columns = [...categories.map((column) => column.source), ...values.map((column) => ({ ...column.source, isMeasure: true, roles: { ...column.source.roles, measures: true } }))];
     if (!columns.length) return undefined;
     const rowCount = Math.max(0, ...categories.map((column) => column.values.length), ...values.map((column) => column.values.length));
     const rows: powerbi.DataViewTableRow[] = new Array(rowCount);
@@ -52,8 +52,8 @@ export function formatPowerBiValue(value: number, formatString = "", formatHint:
 export function buildContext(table: powerbi.DataViewTable | undefined, selectedIndices: number[] = []): QnaContext {
     const columns = table?.columns || [];
     const rows = table?.rows || [];
-    const fieldColumns = columns.map((column, index) => ({ column, index })).filter(({ column }) => !column.roles?.measures);
-    const measureColumns = columns.map((column, index) => ({ column, index })).filter(({ column }) => !!column.roles?.measures);
+    const fieldColumns = columns.map((column, index) => ({ column, index })).filter(({ column }) => !column.roles?.measures && !column.isMeasure);
+    const measureColumns = columns.map((column, index) => ({ column, index })).filter(({ column }) => !!column.roles?.measures || !!column.isMeasure);
     const key = (column: powerbi.DataViewMetadataColumn): string => column.queryName || column.displayName;
     const text = (value: unknown): string => value == null ? "" : value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
     const fields: QnaField[] = fieldColumns.map(({ column, index }) => {

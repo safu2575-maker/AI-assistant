@@ -1,6 +1,6 @@
 import { settingsSelect } from "./settingsSelect";
 /** Organize existing controls without replacing their draft state or event handlers. */
-export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLElement, navigation: HTMLElement, body: HTMLElement, layoutNote: HTMLElement): (section: boolean | "time") => void {
+export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLElement, navigation: HTMLElement, body: HTMLElement, layoutNote: HTMLElement): (section: boolean | "time" | "revenue" | "startup") => void {
     const createSection = (title: string, description: string) => {
         const section = document.createElement("section"); section.className = "askbics-settings-page";
         const heading = document.createElement("h3"); heading.textContent = title;
@@ -11,11 +11,16 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     const suggestions = createSection("Suggestions", "Choose the names offered while typing and your default measure.");
     const synonyms = createSection("Synonyms", "Use familiar words for your fields and measures.");
     const layout = createSection("Table & matrix", "Control automatic layouts. Explicit requests take priority.");
+    const startup = createSection("Startup loading", "Keep the initial visual query small.");
+    const hasStartup = !!form.querySelector(".askbics-qna__startup-settings");
+    const revenue = createSection("Percentage of Revenue", "Divide each amount by revenue for the same period, including YTD and TTM.");
     const reports = createSection("Saved reports", "Organize reports into sections.");
     for (const child of Array.from(form.children)) {
         const target = child.classList.contains("askbics-qna__conversation-settings") ? general
             : child.classList.contains("askbics-qna__autocomplete-settings") ? suggestions
             : child.classList.contains("askbics-qna__synonym-settings") ? synonyms
+            : child.classList.contains("askbics-qna__revenue-settings") ? revenue
+            : child.classList.contains("askbics-qna__startup-settings") ? startup
             : child.tagName === "FIELDSET" ? reports : layout;
         target.append(child);
     }
@@ -46,7 +51,7 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     const entries = [
         {label:"General",page:general}, {label:"Suggestions",page:suggestions}, {label:"Synonyms",page:synonyms},
         {label:"Table & matrix",page:layout}, {label:"Time intelligence",page:time},
-        {label:"Data connection",page:data}, {label:"Saved reports",page:reports}, {label:"Advanced",page:data}
+        {label:"Data setup",page:data}, {label:"Saved reports",page:reports}, {label:"Percentage of Revenue",page:revenue}, ...(hasStartup ? [{label:"Startup loading",page:startup}] : [])
     ];
     time.classList.add("askbics-settings-page"); data.classList.add("askbics-settings-page");
     const timePanel = time.querySelector<HTMLElement>(".askbics-time-setup");
@@ -74,7 +79,7 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
         buttons.forEach((button,i)=>button.setAttribute("aria-current",i===index ? "page" : "false"));
         compact.value=String(index); refreshCompact?.(); body.scrollTop=0;
         // Keep persistent data controls inside their owner for subsequent dialog opens.
-        data.querySelectorAll<HTMLElement>(".askbics-parameter-trial > details").forEach(details=>{details.hidden=index!==7;});
+        data.querySelectorAll<HTMLElement>(".askbics-parameter-trial > details").forEach(details=>{details.hidden=false;});
     };
     entries.forEach((entry,index)=>{
         const button=document.createElement("button"); button.type="button"; button.textContent=entry.label; button.onclick=()=>select(index); buttons.push(button); navigation.append(button);
@@ -83,6 +88,6 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     compact.onchange=()=>select(Number(compact.value)); navigation.prepend(compact);
     refreshCompact=settingsSelect(compact,false);
     compact.nextElementSibling?.classList.add("askbics-settings-section-control");
-    body.append(general,suggestions,synonyms,layout,time,data,reports); select(0);
-    return section=>select(section===true ? 7 : section==="time" ? 4 : 0);
+    body.append(general,suggestions,synonyms,layout,time,data,reports,revenue,...(hasStartup ? [startup] : [])); select(0);
+    return section=>{ const page = section === "startup" && hasStartup ? startup : section === "revenue" ? revenue : section === true ? data : section === "time" ? time : general; select(entries.findIndex(entry => entry.page === page)); };
 }

@@ -1,0 +1,201 @@
+{
+  "name": "Q&A Assistant Testing",
+  "datasetId": "f5f1ef96-8df9-4b13-9d70-45d9edac66e2",
+  "workspaceId": "c2cffaa4-26fa-4c55-a672-456d96f03348",
+  "measures": [
+    {
+      "name": "Rent Measure",
+      "modelName": "Rent Measure",
+      "aliases": [
+        "rent"
+      ]
+    },
+    {
+      "name": "Sales Measure",
+      "modelName": "Sales Measure",
+      "aliases": [
+        "sales"
+      ]
+    }
+  ],
+  "dimensions": [
+    {
+      "name": "Assigned Group",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Assigned Group",
+      "aliases": [
+        "group"
+      ],
+      "type": "text"
+    },
+    {
+      "name": "Assigned Tenant Name",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Assigned Tenant Name",
+      "aliases": [
+        "tenant"
+      ],
+      "type": "text"
+    },
+    {
+      "name": "Assigned Sales Category",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Assigned Sales Category",
+      "aliases": [
+        "sales category"
+      ],
+      "type": "text"
+    },
+    {
+      "name": "City",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "City",
+      "type": "text"
+    },
+    {
+      "name": "Currency",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Currency",
+      "type": "text"
+    },
+    {
+      "name": "Floor",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Floor",
+      "type": "text"
+    },
+    {
+      "name": "Mall",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Mall",
+      "type": "text"
+    },
+    {
+      "name": "Quarter",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Quarter",
+      "type": "text"
+    },
+    {
+      "name": "Record ID",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Record ID",
+      "type": "text"
+    },
+    {
+      "name": "Region",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Region",
+      "type": "text"
+    },
+    {
+      "name": "Unit",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Unit",
+      "type": "text"
+    },
+    {
+      "name": "Zone",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Zone",
+      "type": "text"
+    },
+    {
+      "name": "Year",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Year",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Date",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Date",
+      "type": "date"
+    },
+    {
+      "name": "Month",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Month",
+      "type": "date"
+    },
+    {
+      "name": "MonthIndex",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "MonthIndex",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Cost",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Cost",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Footfall",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Footfall",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Items Sold",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Items Sold",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Profit",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Profit",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Rent",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Rent",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Sales",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Sales",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Target",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Target",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Transactions",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Transactions",
+      "type": "number",
+      "numeric": true
+    },
+    {
+      "name": "Variance",
+      "table": "askBICS_Sample_Retail_Data",
+      "column": "Variance",
+      "type": "number",
+      "numeric": true
+    }
+  ],
+  "year": {
+    "table": "askBICS_Sample_Retail_Data",
+    "column": "Year"
+  },
+  "time": {
+    "dateField": "Date",
+    "yearField": "Year"
+  }
+}

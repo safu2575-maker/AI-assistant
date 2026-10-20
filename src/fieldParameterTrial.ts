@@ -1,3 +1,5 @@
+import { revenueQuestion, revenueRequest } from './revenue';
+import { visualBuild } from "./buildInfo";
 import { indexGroupRows, collectTextValues } from "./queryPerformance";
 import { monthlyPeriod } from "./monthlyPeriods";
 import { compareTimeLabels, timeFieldOrder } from "./qna/timeLayout";
@@ -30,9 +32,10 @@ export class FieldParameterTrial {
     private timeSelectors: Partial<Record<"dateField" | "yearField" | "monthField" | "monthIndexField", HTMLSelectElement>> = {};
     private timeOrder: HTMLSelectElement;
     private timeYearStart: HTMLInputElement;
-    public measureOptions = (): string[] => this.fieldOnlyBinding ? [] : this.measureLabels.value.trim() ? this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) : this.measures;
+    public measureOptions = (): string[] => this.fieldOnlyBinding ? [] : this.measureBindingObserved ? this.measures : this.measureLabels.value.trim() ? this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) : this.measures;
     private automatic: HTMLInputElement;
     private select: HTMLSelectElement;
+    private groupingChoices: HTMLElement;
     private hydrated = false;
     private autoDetected = false;
     private setupSummary: HTMLElement;
@@ -42,6 +45,26 @@ export class FieldParameterTrial {
     private latest?: powerbi.DataView;
     private latestFilters: powerbi.IFilter[] = [];
     private measures: string[] = [];
+    private directMeasures: string[] = [];
+    private measureBindingObserved = false;
+    private hasMeasureParameter = false;
+    public startupLoading = false;
+    public startupAcceptsSegments(view: powerbi.DataView): boolean { const table = view.table || categoricalAsTable(view.categorical) || readModelMatrix(view.matrix)?.table; return sameGrouping((table?.columns || []).filter(column => !column.isMeasure && !column.roles?.measures).map(column => column.displayName), this.startup?.()?.fields || []); }
+    public startup?: () => { enabled: boolean; fields: string[]; measure: string } | undefined;
+    private startupNeeded = true;
+    public runStartup = (): void => {
+        const setup = this.startup?.();
+        if (!this.startupNeeded || !setup?.enabled || this.pending || this.loadingSuggestionValues || !this.latest || !this.automaticEnabled()) return;
+        this.startupNeeded = false;
+        try {
+            const config = this.readConfig();
+            if (!this.hasParameterContext) throw new Error("Startup selection requires a field parameter. Directly bound fields are controlled by Power BI.");
+            if (!setup.fields.length || setup.fields.length > 3 || new Set(setup.fields).size !== setup.fields.length || setup.fields.some(name => !config.options.includes(name)) || !this.measureOptions().includes(setup.measure)) throw new Error("Choose 1–3 available startup fields and one measure in Startup loading.");
+            this.startupLoading = true;
+            void this.requestBase({ groups: setup.fields, measures: [setup.measure], totalOnly: !setup.fields.length, filters: [], summary: [] }, config).catch(error => { this.status.textContent = String(error.message || error); }).finally(() => { this.startupLoading = false; });
+        } catch (error) { this.status.textContent = String(error); }
+    };
+    public applyStartup = (): void => { this.startupNeeded = true; this.runStartup(); };
     private fieldOnlyBinding = false;
     private learnedFields = new Map<string, ModelField>();
     private suggestionFieldsLoaded = new Set<string>();
@@ -166,6 +189,7 @@ export class FieldParameterTrial {
     public groupAliases?: () => Record<string, string[]>;
     public defaultMeasure?: () => string | undefined;
     public additiveMeasures?: () => string[];
+    public revenue?: () => ParameterConfig["revenue"];
     public preferMatrix?: (cardinalities: number[]) => boolean;
 
     constructor(element: HTMLElement, private host: powerbi.extensibility.visual.IVisualHost) {
@@ -178,18 +202,20 @@ export class FieldParameterTrial {
         detect.onclick = () => {
             const columns = this.latest ? parameterMetadataColumns(this.latest) : [];
             const detected = discoverParameter(columns);
-            if (!detected?.options.length) { this.status.textContent = "Power BI has not exposed an unambiguous parameter source. Select all parameter fields with Show selected field enabled, or use Advanced configuration."; return; }
-            if (this.hydrated && (this.table.value !== detected.table || this.column.value !== detected.column)) { this.status.textContent = "A different parameter was detected. Review its target in Advanced configuration before switching."; return; }
+            if (!detected?.options.length) { this.status.textContent = "Power BI has not exposed an unambiguous parameter source. Select all parameter fields with Show selected field enabled, or review Field and measure configuration below."; this.setupSummary.textContent = this.status.textContent; return; }
+            if (this.hydrated && (this.table.value !== detected.table || this.column.value !== detected.column)) { this.status.textContent = "A different parameter was detected. Review its target in Field and measure configuration below before switching."; this.setupSummary.textContent = this.status.textContent; return; }
             const measures = discoverParameter(columns, true);
             if (measures?.options.length) {
                 this.measureTable.value = measures.table; this.measureColumn.value = measures.column;
                 this.measureLabels.value = measures.options.join(", ");
             }
             this.autoDetected = true; this.discoverSetup(columns);
-            this.status.textContent = "Setup detected from exposed fields and measures. Existing field mappings are preserved. Expose all measure choices before using this action.";
+            advanced.open = true;
+            this.status.textContent = "Detected setup loaded below. Review the fields and measures, then click Save settings to apply. Existing mappings are preserved.";
+            this.setupSummary.textContent = this.status.textContent;
         };
         this.panel.append(detect);
-        const advanced = document.createElement("details"); const advancedTitle = document.createElement("summary"); advancedTitle.textContent = "Advanced configuration"; advanced.append(advancedTitle);
+        const advanced = document.createElement("details"); const advancedTitle = document.createElement("summary"); advancedTitle.textContent = "Field and measure configuration"; advanced.open = false; advanced.append(advancedTitle);
         const help = document.createElement("p"); help.textContent = "Fields are learned as Power BI exposes them. Select all parameter fields once to expose all options. Use overrides for custom parameter labels or metadata Power BI does not expose."; advanced.append(help);
         const input = (text: string, placeholder: string): HTMLInputElement => {
             const label = document.createElement("label"); label.textContent = text;
@@ -198,9 +224,9 @@ export class FieldParameterTrial {
         this.table = input("Parameter table", "Parameter");
         this.column = input("Parameter label column", "Parameter");
         this.options = input("Grouping options (comma-separated)", "Year, City, Assigned Tenant Name");
-        const automaticLabel = document.createElement("label");
-        this.automatic = document.createElement("input"); this.automatic.type = "checkbox";
-        automaticLabel.append(this.automatic, document.createTextNode(" Switch grouping and filters from questions")); this.panel.append(automaticLabel);
+        const automaticLabel = document.createElement("label"); automaticLabel.className = "askbics-setup-toggle";
+        this.automatic = document.createElement("input"); this.automatic.type = "checkbox"; this.automatic.setAttribute("role", "switch");
+        automaticLabel.append(this.automatic, document.createTextNode(" Switch grouping and filters from questions")); this.panel.insertBefore(automaticLabel, this.setupSummary);
         this.measureTable = input("Measure parameter table (optional)", "Measure Selection");
         this.measureColumn = input("Measure parameter label column", "Measure Selection");
         this.measureLabels = input("Measure parameter options (comma-separated)", "Rent Measure, Revenue");
@@ -209,9 +235,9 @@ export class FieldParameterTrial {
         this.mappings = document.createElement("textarea"); this.mappings.rows = 6;
         this.mappings.placeholder = '[{"name":"Assigned Tenant Name","table":"Retail","column":"Tenant","aliases":["Tenant"],"values":["Home Living"]},{"name":"Date","table":"Calendar","column":"Date","type":"date"}]';
         mapLabel.append(this.mappings); advanced.append(mapLabel);
-        const label = document.createElement("label"); label.textContent = "Test grouping (Ctrl/Cmd selects multiple)";
+        const label = document.createElement("label"); label.textContent = "Fields to test";
         this.select = document.createElement("select"); this.select.multiple = true; this.select.size = 3;
-        this.select.setAttribute("aria-label", "Grouping fields"); label.append(this.select);
+        this.select.setAttribute("aria-label", "Grouping fields"); this.select.hidden = true; this.groupingChoices = document.createElement("div"); this.groupingChoices.className = "askbics-grouping-choices"; this.groupingChoices.setAttribute("role", "group"); this.groupingChoices.setAttribute("aria-label", "Fields to test"); label.append(this.select, this.groupingChoices);
         const troubleshooting = document.createElement("details"); const troubleshootingTitle = document.createElement("summary"); troubleshootingTitle.textContent = "Troubleshooting"; troubleshooting.append(troubleshootingTitle, label);
         const save = document.createElement("button"); save.type = "button"; save.textContent = "Save configuration";
         save.onclick = () => { this.saveSettings(); };
@@ -232,16 +258,16 @@ export class FieldParameterTrial {
         this.status = document.createElement("p"); this.status.setAttribute("role", "status");
         this.status.textContent = "Use a real calendar date column for date ranges, calendar YTD and TTM. Failed queries never fall back to local answers.";
         const diagnosticButton = document.createElement("button"); diagnosticButton.type = "button";
-        diagnosticButton.textContent = "Show / copy query diagnostics (2.9.67)";
+        diagnosticButton.textContent = `Show / copy query diagnostics (${visualBuild})`;
         const diagnosticText = document.createElement("textarea"); diagnosticText.readOnly = true; diagnosticText.rows = 12; diagnosticText.hidden = true;
         diagnosticText.setAttribute("aria-label", "Query diagnostics: select and copy this text");
         diagnosticButton.onclick = async () => {
-            diagnosticText.value = JSON.stringify({ build: "2.9.67.0", reason: this.waitingReason, events: this.diagnostics }, null, 2);
+            diagnosticText.value = JSON.stringify({ build: visualBuild, mappingRevision: "categorical-v3-compatible", reason: this.waitingReason, events: this.diagnostics }, null, 2);
             diagnosticText.hidden = false; diagnosticText.focus(); diagnosticText.select();
             try { await navigator.clipboard.writeText(diagnosticText.value); this.status.textContent = "Query diagnostics copied. No row values are included."; }
             catch { this.status.textContent = "Diagnostics are selected below. Press Ctrl+C to copy them."; }
         };
-        save.hidden = true; advanced.append(save); troubleshooting.append(test, reset, diagnosticButton, diagnosticText);
+        save.hidden = true; advanced.append(save); const testActions = document.createElement("div"); testActions.className = "askbics-setup-actions"; testActions.append(test, reset); troubleshooting.append(testActions, diagnosticButton, diagnosticText);
         const timePanel = document.createElement("section"); timePanel.className = "askbics-time-setup"; this.timePanel = timePanel;
         const timeTitle = document.createElement("h3"); timeTitle.textContent = "Time intelligence settings";
         const timeHelp = document.createElement("p"); timeHelp.textContent = "Select your Year, Month and existing numeric MonthIndex columns. YTD and TTM require MonthIndex and use it directly to filter months. Use a continuous monthly index where January 2024 is 24289 and February 2024 is 24290.";
@@ -284,7 +310,7 @@ export class FieldParameterTrial {
 
     private persistConfig(): void {
         if (this.settingsSnapshot) return;
-        const config = this.readConfig();
+        const { directMeasures: _directMeasures, ...config } = this.readConfig();
         // Persist schema once, not newly observed row values on every question.
         if (this.autoDetected) {
             const overrides = JSON.parse(this.mappings.value.trim() || "[]") as ModelField[];
@@ -325,29 +351,39 @@ export class FieldParameterTrial {
     private readConfig(): ParameterConfig {
         const fields = this.mappedFields();
         const config = { table: this.table.value.trim(), column: this.column.value.trim(), options: this.options.value.split(",").map(value => value.trim()).filter(Boolean), fields, enabled: this.automatic.checked, autoDetected: this.autoDetected };
-        const measureParameter = !this.fieldOnlyBinding && (this.measureTable.value.trim() || this.measureColumn.value.trim() || this.measureLabels.value.trim())
+        const measureParameter = !this.fieldOnlyBinding && (!this.measureBindingObserved || this.hasMeasureParameter) && (this.measureTable.value.trim() || this.measureColumn.value.trim() || this.measureLabels.value.trim())
             ? { table: this.measureTable.value.trim(), column: this.measureColumn.value.trim(), options: this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) } : undefined;
         const time = this.readTimeSetup();
         const hasTimeSetup = Object.values(this.timeSelectors).some(select => !!select.value) || time.numericOrder !== "auto" || time.monthIndexBase !== 1 || time.twoDigitYearStart !== 2000;
-const complete = { ...config, ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
+const complete = { ...config, directMeasures: this.directMeasures, revenue: this.revenue?.(), ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
         validateParameterConfig(complete); return complete;
     }
 
     private fillOptions(config: ParameterConfig): void {
         this.refreshTimeFields(config.fields);
         this.select.replaceChildren();
-        config.options.forEach(value => { const option = document.createElement("option"); option.value = value; option.textContent = value; this.select.append(option); });
+        this.groupingChoices.replaceChildren();
+        config.options.forEach(value => { const option = document.createElement("option"); option.value = value; option.textContent = value; this.select.append(option); const label = document.createElement("label"), check = document.createElement("input"); check.type = "checkbox"; check.onchange = () => { option.selected = check.checked; }; label.append(check, document.createTextNode(value)); this.groupingChoices.append(label); });
     }
 
     selectDataView(views: powerbi.DataView[]): powerbi.DataView | undefined {
+        // Inspect every incoming shape before selecting one. Do not include row values.
+        this.trace("host-response", { views: views.map((view, index) => ({
+            index, hasTable: !!view.table, hasMatrix: !!view.matrix, hasCategorical: !!view.categorical,
+            tableRows: view.table?.rows?.length,
+            matrixLevels: view.matrix?.rows?.levels?.length,
+            matrixChildren: view.matrix?.rows?.root?.children?.length,
+            categoricalColumns: view.categorical?.categories?.length,
+            metadataColumns: view.metadata?.columns?.map(column => column.displayName)
+        })) });
         const candidates = views.flatMap(view => {
             const tables = [view.table, categoricalAsTable(view.categorical), readModelMatrix(view.matrix)?.table].filter(Boolean) as powerbi.DataViewTable[];
             return tables.map(table => ({ ...view, table }));
         });
         const score = (view: powerbi.DataView): number => {
-            const fields = view.table!.columns.filter(column => !column.roles?.measures);
+            const fields = view.table!.columns.filter(column => !column.roles?.measures && !column.isMeasure);
             const resolved = fields.filter(column => column.sourceFieldParameters?.length && column.displayName !== this.column.value.trim()).length;
-            return (this.pending && sameGrouping(fields.map(column => column.displayName), this.pending.plan.groups) ? 1000 : 0) + resolved;
+            return (this.pending && sameGrouping(fields.map(column => column.displayName), this.pending.plan.groups) ? 1000 : 0) + resolved * 10 + (view.table!.columns.length ? 1 : 0);
         };
         return candidates.sort((a, b) => score(b) - score(a))[0] || views[0];
     }
@@ -409,6 +445,11 @@ const complete = { ...config, ...(this.additiveMeasures?.().length ? {additiveMe
         this.cancel();
         let config = this.readConfig();
         config.groupAliases = this.groupAliases?.();
+        const revenue = revenueQuestion(question);
+        if (revenue.enabled) {
+            if (!config.revenue?.field || !config.revenue.value?.trim()) throw new Error('Configure Settings > Percentage of Revenue before asking this question.');
+            config = { ...config, revenuePercentage: true, additiveMeasures: [] }; question = revenue.question;
+        }
         question = normalizeMonthPeriods(question, config.time, [...this.measures, ...config.fields.flatMap(field => [field.name, ...(field.aliases || []), ...(field.type !== "date" ? field.values || [] : [])])]);
         const months = "January|February|March|April|May|June|July|August|September|October|November|December";
         const comparison = new RegExp(`\\b((?:${months})\\s+\\d{4})\\s+(?:vs\\.?|versus)\\s+((?:${months})\\s+\\d{4})\\b`, "i").exec(question);
@@ -488,7 +529,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             ["Year", "Month"].every(name => config.options.includes(name)) && !["Year", "Month"].every(name => config.fields.some(field => field.name === name))) {
             await this.request({ groups: ["Year", "Month"], measures: [], listOnly: true, filters: [], summary: [] }, config);
             if (revision !== this.questionRevision) throw new Error("Query cancelled.");
-            config = this.readConfig(); config.groupAliases = this.groupAliases?.();
+            config = { ...this.readConfig(), ...(revenue.enabled ? { revenuePercentage: true, additiveMeasures: [] } : {}) }; config.groupAliases = this.groupAliases?.();
         }
         if (comparison) {
             const base = question.replace(comparison[0], " ");
@@ -522,7 +563,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
                     const shared = (answers[0].table!.modelEditor?.filters || []).filter(filter => answers.every(answer => answer.table?.modelEditor?.filters.some(other => key(other) === key(filter))));
                     return [...new Map(shared.map(filter => [key(filter), filter])).values()];
                 })() },
-                modelPeriods: [comparison[1], comparison[2]].flatMap((period, index) => plans[0].measures.map((measure, measureIndex) => ({ sourceColumn: count + index * plans[0].measures.length + measureIndex, period, question: base, measure, groupCount: count }))),
+                modelPeriods: [comparison[1], comparison[2]].flatMap((period, index) => plans[0].measures.map((measure, measureIndex) => ({ sourceColumn: count + index * plans[0].measures.length + measureIndex, period, question: base + (revenue.enabled ? " as percentage of revenue" : ""), measure, groupCount: count }))),
                 modelRowSelections: periodSelections.map(periods => periods.flat()),
                 modelCellSelections: periodSelections.map(periods => [...plans[0].groups.map(() => periods.flat()), ...periods.flatMap(selections => plans[0].measures.map(() => selections))]),
                 modelSelections: [...keys.keys()].map(key => {
@@ -559,7 +600,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
                 const anchor = anchors[0];
                 const period = question.slice(anchor.start, anchor.end);
                 const base = question.slice(0, anchor.start) + " " + question.slice(anchor.end);
-                answer.table.modelPeriods = plan.measures.map((measure, index) => ({sourceColumn: plan.groups.length + index, period, question: base, measure, groupCount: plan.groups.length}));
+                answer.table.modelPeriods = plan.measures.map((measure, index) => ({sourceColumn: plan.groups.length + index, period, question: base + (revenue.enabled ? " as percentage of revenue" : ""), measure, groupCount: plan.groups.length}));
             }
         }
         const pivot = answer.table?.modelPivot;
@@ -587,6 +628,10 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
     }
 
     private request(plan: ParameterPlan, config: ParameterConfig, refresh = false): Promise<QnaResponse> {
+        if (config.revenuePercentage && plan.measures.length && !plan.listOnly) return revenueRequest(plan, config, p => this.requestBase(p, config, refresh), (view, p) => { this.requestConfig = config; return this.answer(view, p); });
+        return this.requestBase(plan, config, refresh);
+    }
+    private requestBase(plan: ParameterPlan, config: ParameterConfig, refresh = false): Promise<QnaResponse> {
         if (this.fieldOnlyBinding && plan.measures.length) return Promise.reject(new Error("This visual is configured for field-only lists. Add a measure or Measure Selector to Measures and KPIs to ask measure questions."));
         this.dataRequestsStopped = false;
         this.onProgress?.("Checking available data…");
@@ -663,7 +708,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
     update(dataView?: powerbi.DataView, jsonFilters?: powerbi.IFilter[], isDataUpdate = true): void {
         if (!dataView) return;
         if (!isDataUpdate) { this.trace("presentation-update-ignored"); return; }
-        this.fieldOnlyBinding = !!dataView.table?.columns.length && ![...dataView.table.columns, ...(dataView.metadata.columns || [])].some(column => column.roles?.measures || column.isMeasure);
+        if (!this.pending) this.fieldOnlyBinding = !!dataView.table?.columns.length && !parameterMetadataColumns(dataView).some(column => column.roles?.measures || column.isMeasure);
         const table = dataView.table || categoricalAsTable(dataView.categorical) || readModelMatrix(dataView.matrix)?.table;
         const signature = JSON.stringify({ table, filters: jsonFilters || [], metadata: { ...dataView.metadata, objects: { ...dataView.metadata.objects, state: undefined } }, owned: dataView.metadata.objects?.parameterTrial?.filter });
         const uiState = String(dataView.metadata.objects?.state?.conversation || "");
@@ -677,7 +722,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             }
         }
         if (!this.pending && !this.loadingSuggestionValues && (dataView !== this.latest || signature !== this.lastDataSignature)) {
-            this.queryCache.clear(); this.completed = undefined;
+            this.startupNeeded = true; this.queryCache.clear(); this.completed = undefined;
             this.suggestionFieldsLoaded.clear();
             this.learnedFields.forEach((field, name) => this.learnedFields.set(name, { ...field, values: [] }));
             this.onDataContextChanged?.();
@@ -686,6 +731,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         ++this.dataRevision;
         this.latest = dataView;
 
+        this.trace("host-shape", { tableColumns: dataView.table?.columns.map(c => ({ name: c.displayName, roles: c.roles, isMeasure: c.isMeasure })), matrixLevels: dataView.matrix?.rows.levels.map(level => level.sources.map(c => c.displayName)), matrixMeasures: dataView.matrix?.valueSources.map(c => c.displayName), metadataColumns: dataView.metadata.columns?.map(c => ({ name: c.displayName, roles: c.roles, isMeasure: c.isMeasure, parameters: c.sourceFieldParameters?.map(p => p.displayName) })) });
         this.trace("data-view", { columns: table?.columns.map(column => column.displayName), rows: table?.rows?.length, segmented: !!dataView.metadata.segment, pending: !!this.pending });
         this.hasParameterContext = this.hasParameterContext || (table?.columns || []).some(column =>
             !!column.sourceFieldParameters?.length || column.displayName === this.column.value.trim());
@@ -693,13 +739,19 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const previousMeasureSetup = JSON.stringify([this.measureTable.value, this.measureColumn.value, this.measureLabels.value]);
         const metadataColumns = parameterMetadataColumns(dataView);
         const detectedMeasures = discoverParameter(metadataColumns, true);
+        const catalogMeasures = metadataColumns.filter(column => column.roles?.measures || column.isMeasure);
+        if (catalogMeasures.length || table?.columns.length && !this.pending) {
+        this.measureBindingObserved = true;
+        this.hasMeasureParameter = !!detectedMeasures || metadataColumns.some(column => (column.roles?.measures || column.isMeasure) && !!column.sourceFieldParameters?.length) || (!!this.pending && !deliveredMeasures.length && !!this.requestConfig?.measureParameter);
+        this.directMeasures = [...new Map(catalogMeasures.map(column => [column.displayName, column])).values()].filter(column => !column.sourceFieldParameters?.length && !metadataColumns.some(metadata => metadata.displayName === column.displayName && !!metadata.sourceFieldParameters?.length)).map(column => column.displayName);
+        }
         this.trace("parameter-metadata", { measures: metadataColumns.filter(column => column.roles?.measures || column.isMeasure).map(column => ({ name: column.displayName, isMeasure: column.isMeasure, numeric: !!(column.type?.numeric || column.type?.integer), sources: column.sourceFieldParameters?.map(source => ({name: source.displayName, hasExpression: !!source.expr})) })) });
         if (detectedMeasures?.options.length && (!this.measureTable.value || this.measureTable.value === detectedMeasures.table && this.measureColumn.value === detectedMeasures.column)) {
             this.measureTable.value = detectedMeasures.table; this.measureColumn.value = detectedMeasures.column;
             this.measureLabels.value = [...new Set([...this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean), ...detectedMeasures.options])].join(", ");
         }
-        this.measures = this.fieldOnlyBinding ? [] : this.measureLabels.value ? this.measureOptions() : deliveredMeasures.map(column => column.displayName);
-        this.measureStatus.textContent = this.measureTable.value
+        this.measures = this.fieldOnlyBinding ? [] : [...new Set([...this.directMeasures, ...(this.hasMeasureParameter ? this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) : this.directMeasures)])];
+        this.measureStatus.textContent = this.hasMeasureParameter
             ? "Selective measures configured. Lists use one available measure internally and display only field values. No additional support measure is required."
             : "Direct measure bindings query every bound measure. Bind a measure field parameter to enable selective queries.";
         table?.columns.forEach((column, index) => {
@@ -798,15 +850,19 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         if (!dataView) { this.waitingReason = "No data view received."; return false; }
         if (dataView.metadata.segment) { this.waitingReason = "Power BI is still returning result segments."; return false; }
         const table = dataView.table || categoricalAsTable(dataView.categorical) || readModelMatrix(dataView.matrix)?.table;
-        const columns = (table?.columns || []).filter(column => !column.roles?.measures);
+        if (!table) { this.waitingReason = "Power BI returned metadata without usable table, matrix, or categorical result data. Check the visual data mapping and bindings."; return false; }
+        const columns = (table?.columns || []).filter(column => !column.roles?.measures && !column.isMeasure);
         if (!sameGrouping(columns.map(column => column.displayName), plan.groups)) { this.waitingReason = `Requested: ${plan.groups.join(", ")}. Received: ${columns.map(column => column.displayName).join(", ") || "no grouping fields"}.`; return false; }
         if (!columns.every(column => column.sourceFieldParameters?.length)) { this.waitingReason = "Returned fields lack source field-parameter metadata."; return false; }
         const measureParameter = this.requestConfig?.measureParameter;
         if (measureParameter) {
             const expectedMeasures = selectedParameterMeasures(plan, this.requestConfig!);
             const actualMeasures = (table?.columns || []).filter(column => column.roles?.measures || column.isMeasure).map(column => column.displayName);
-            if (!sameGrouping(actualMeasures, expectedMeasures)) { this.waitingReason = "Waiting for only the requested measures. Remove directly bound measures and bind the measure parameter instead."; return false; }
+            const allowed = [...new Set([...expectedMeasures, ...(this.requestConfig?.directMeasures || [])])];
+            if (!sameGrouping(actualMeasures, allowed)) { this.waitingReason = "Waiting for the requested parameter measures and directly bound measures."; return false; }
         }
+        const availableMeasures = (table?.columns || []).filter(column => column.roles?.measures || column.isMeasure).map(column => column.displayName);
+        if (plan.measures.some(name => !availableMeasures.includes(name))) { this.waitingReason = "Waiting for the requested measure values."; return false; }
         const expected = filters.map(filterSignature), actual = this.latestFilters.map(filterSignature);
         // Resolved parameter fields acknowledge a grouping-only selection. Some
         // Power BI hosts do not echo that self-filter in the JSON filter payload.

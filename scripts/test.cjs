@@ -96,7 +96,7 @@ async function checkVisualBackgroundSelection() {
     setFilterChips(labels, remove) { this.labels = labels; this.remove = remove; }
   }
   const load = compiled.require.bind(compiled);
-  compiled.require = (name) => name === "./fieldParameterTrial" ? { FieldParameterTrial: class { noteUiStateWrite() {} hydrate() {} selectDataView(views) { return views[0]; } update() {} fail() {} destroy() {} } } : name === "./qna/ui" ? { GlobalQnaUi: UiStub } : name.endsWith(".less") ? {} : load(name);
+  compiled.require = (name) => name === "./fieldParameterTrial" ? { FieldParameterTrial: class { runStartup() {} noteUiStateWrite() {} hydrate() {} selectDataView(views) { return views[0]; } update() {} fail() {} destroy() {} } } : name === "./qna/ui" ? { GlobalQnaUi: UiStub } : name.endsWith(".less") ? {} : load(name);
   compiled._compile(fs.readFileSync(filename, "utf8"), filename);
   const calls = [];
   const nativeSelections = []; let identitySequence = 0;

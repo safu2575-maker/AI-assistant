@@ -1,4 +1,31 @@
 const assert = require('node:assert/strict');
+assert.equal(require('../.tmp/test/buildInfo').visualBuild, require('../pbiviz.json').visual.version,
+  'Diagnostic build must match the packaged visual version');
+const capabilities = require('../capabilities.json');
+for (const mapping of capabilities.dataViewMappings) {
+  for (const condition of mapping.conditions || []) {
+    assert.ok(Object.values(condition).filter(role => role.min >= 1).length <= 1,
+      'Power BI allows only one required role per mapping condition');
+  }
+}
+for (const [fields, measures] of [[1,0],[10,0],[1,1],[10,3],[0,1],[0,3]]) {
+  const matches = capabilities.dataViewMappings.filter(mapping => !mapping.conditions || mapping.conditions.some(condition =>
+    Object.entries(condition).every(([role, limits]) => {
+      const count = role === 'fields' ? fields : measures;
+      return count >= (limits.min || 0) && count <= (limits.max ?? Infinity);
+    })));
+  assert.equal(matches.length, 1, `Exactly one mapping for ${fields} fields / ${measures} measures`);
+  assert.ok(matches[0].categorical);
+}
+assert.equal(capabilities.dataViewMappings[0].categorical.categories.for.in, 'fields');
+assert.equal(capabilities.dataViewMappings[0].categorical.values.select[0].for.in, 'measures');
+const { readModelMatrix } = require('../.tmp/test/modelMatrix');
+const scalarMatrix = readModelMatrix({
+  rows: { levels: [], root: { values: { 0: { value: 125 }, 1: { valueSourceIndex: 1, value: 0 } } } },
+  valueSources: [{ displayName: 'Actual' }, { displayName: 'Budget' }]
+});
+assert.deepEqual(scalarMatrix.table.rows, [[125, 0]]);
+assert.deepEqual(scalarMatrix.table.totals, [125, 0]);
 require('./test-settings-select.cjs');
 const { planParameterQuestion, parameterFilters, validateParameterConfig } = require('../.tmp/test/parameterQuery');
 const config = {
@@ -226,7 +253,7 @@ assert.deepEqual(hierarchy.matrix.levelNames,['Parent','Child']);
 
 const elements = [];
 global.document = { createElement(tag) {
-  const e = { tag, value: '', checked: false, children: [], append(...c) { this.children.push(...c); }, prepend() {}, replaceChildren() { this.children = []; }, setAttribute() {}, remove() {} };
+  const e = { tag, value: '', checked: false, children: [], append(...c) { this.children.push(...c); }, insertBefore(child, before) { const index = this.children.indexOf(before); this.children.splice(index < 0 ? this.children.length : index, 0, child); }, prepend() {}, replaceChildren() { this.children = []; }, setAttribute() {}, remove() {} };
   elements.push(e); return e;
 }, createTextNode(text) { return text; } };
 const { FieldParameterTrial } = require('../.tmp/test/fieldParameterTrial');
@@ -647,10 +674,52 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   const groupedMonthly=monthlyPeriod({columns:['Tenant','MonthIndex','M'],rows:[['A','24289','2'],['B','24289','8'],['A','24290','3']],rowIndices:[[],[],[]],modelRawRows:[[null,24289,2],[null,24289,8],[null,24290,3]]},1,['M'],24289,24290,false);
   assert.deepEqual(groupedMonthly.table.rows,[['A','5'],['B','8']],'monthly aggregation keeps categories separate');
 
+  const revenueIsolation = new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
+  revenueIsolation.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(config)}}}});
+  revenueIsolation.measures=['Rent Measure']; revenueIsolation.hasParameterContext=true;
+  const ordinaryPlans=[]; revenueIsolation.request=async(plan)=>{ordinaryPlans.push(plan);return {text:'fixture'};};
+  await revenueIsolation.prepareQuestion('Rent Measure by City',true);
+  revenueIsolation.revenue=()=>({field:'City',value:'Riyadh'});
+  await revenueIsolation.prepareQuestion('Rent Measure by City',true);
+  assert.deepEqual(ordinaryPlans[1],ordinaryPlans[0],'configuring revenue must not change an ordinary question');
+  revenueIsolation.destroy();
+  const sparseTrial = new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
+  sparseTrial.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(config)}}}});
+  const sparseMatrix={metadata:{columns:[]},matrix:{rows:{levels:[{sources:[discoveredColumn('City')]}],root:{children:[{level:0,value:'Riyadh',values:{0:{value:42}}}],values:{0:{value:42}}}},columns:{levels:[],root:{}},valueSources:[{displayName:'Rent Measure',type:{numeric:true}}]}};
+  const sparseChosen=sparseTrial.selectDataView([{metadata:{columns:[]},table:{columns:[],rows:[]}},sparseMatrix]);
+  assert.equal(sparseChosen.table.columns.length,2,'resolved matrix wins over an empty table mapping');
+  sparseTrial.update(sparseChosen);
+  assert.deepEqual(sparseTrial.measureOptions(),['Rent Measure'],'matrix valueSources are measures without role flags');
+  sparseTrial.update({metadata:{columns:[]}});
+  assert.deepEqual(sparseTrial.measureOptions(),['Rent Measure'],'an empty transient update must not erase measure discovery');
+  sparseTrial.destroy();
+  const {categoricalAsTable,buildContext}=require('../.tmp/test/dataAdapter');
+  assert.deepEqual(buildContext(categoricalAsTable({values:[{source:{displayName:'Amount'},values:[42]}]})).measures.map(m=>m.name),['Amount']);
+  assert.deepEqual(buildContext({columns:[{displayName:'Amount',isMeasure:true}],rows:[[42]]}).measures.map(m=>m.name),['Amount']);
+  const directTrial = new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
+  directTrial.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(selectiveConfig)}}}});
+  const directView={metadata:{columns:[]},table:{columns:[discoveredColumn('City'),{displayName:'Rent Measure',isMeasure:true,roles:{measures:true}}],rows:[['Riyadh',42]],totals:[null,42]}};
+  directTrial.update(directView);
+  assert.equal(directTrial.readConfig().measureParameter,undefined,'stale selector configuration must not override a directly dropped measure');
+  assert.deepEqual(directTrial.measureOptions(),['Rent Measure']);
+  directTrial.requestConfig=directTrial.readConfig();
+  assert.equal(directTrial.matches(directView,{groups:['City'],measures:['Rent Measure'],filters:[],summary:[]},parameterFilters({groups:['City'],measures:['Rent Measure'],filters:[],summary:[]},directTrial.readConfig())),true);
+  const startupCalls=[];
+  directTrial.startup=()=>({enabled:true,fields:['City'],measure:'Rent Measure'});
+  directTrial.requestBase=async(plan)=>{startupCalls.push(plan);return {text:''};};
+  directTrial.applyStartup(); directTrial.runStartup(); await flush();
+  assert.equal(startupCalls.length,1,'startup runs once, not on each presentation update');
+  assert.deepEqual(startupCalls[0].groups,['City']); assert.deepEqual(startupCalls[0].measures,['Rent Measure']);
+  directTrial.startup=()=>({enabled:true,fields:['City','Year','Assigned Tenant Name','Extra'],measure:'Rent Measure'});
+  directTrial.applyStartup(); assert.equal(startupCalls.length,1,'invalid startup must not issue a large query');
+  directTrial.destroy();
+  const mixedConfig={...selectiveConfig,directMeasures:['Fixed Measure']};
+  const mixedPlan={groups:['City'],measures:['Fixed Measure','Revenue'],filters:[],summary:[]};
+  assert.deepEqual(parameterFilters(mixedPlan,mixedConfig)[1].values,['Revenue'],'only dynamic measures go to the measure parameter filter');
   const selective = new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
   selective.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(selectiveConfig)}}}});
   selective.requestConfig=selectiveConfig;
-  const measureView=names=>({metadata:{columns:[]},table:{columns:[{displayName:'City',roles:{fields:true},sourceFieldParameters:[{}]},...names.map(displayName=>({displayName,roles:{measures:true}}))],rows:[]}});
+  const measureView=names=>({metadata:{columns:[]},table:{columns:[{displayName:'City',roles:{fields:true},sourceFieldParameters:[{}]},...names.map(displayName=>({displayName,roles:{measures:true},sourceFieldParameters:[{}]}))],rows:[]}});
   assert.equal(selective.matches(measureView(['Revenue']),selectivePlan,parameterFilters(selectivePlan,selectiveConfig)),true);
   assert.equal(selective.matches(measureView(['Rent Measure','Revenue','Profit']),selectivePlan,parameterFilters(selectivePlan,selectiveConfig)),false,'an all-measures response must not be accepted for selective queries');
   selective.update(measureView(['Revenue']));

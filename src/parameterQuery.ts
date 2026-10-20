@@ -18,10 +18,13 @@ export interface ParameterConfig {
     fields: ModelField[];
     enabled: boolean;
     autoDetected?: boolean;
+    directMeasures?: string[];
     measureParameter?: { table: string; column: string; options: string[] };
     groupAliases?: Record<string, string[]>;
     defaultMeasure?: string;
     additiveMeasures?: string[];
+    revenue?: { field: string; value: string };
+    revenuePercentage?: boolean;
     time?: TimeSetup;
 }
 export interface ParameterPlan {
@@ -313,7 +316,9 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
 }
 
 export function selectedParameterMeasures(plan: ParameterPlan, config: ParameterConfig): string[] {
-    if (plan.measures.length || !config.measureParameter) return plan.measures;
+    if (!config.measureParameter) return plan.measures;
+    const requested = plan.measures.filter(name => !(config.directMeasures || []).includes(name));
+    if (requested.length) return requested;
     const support = config.measureParameter.options.find(name => name === "askBICS List Support");
     return support ? [support] : config.measureParameter.options.slice(0, 1);
 }

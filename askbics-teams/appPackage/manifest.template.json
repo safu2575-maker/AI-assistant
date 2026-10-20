@@ -1,0 +1,32 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "0.4.1",
+  "id": "${CLIENT_ID}",
+  "developer": {
+    "name": "InfoBICS",
+    "websiteUrl": "${WEBSITE_URL}",
+    "privacyUrl": "${PRIVACY_URL}",
+    "termsOfUseUrl": "${TERMS_URL}"
+  },
+  "name": { "short": "askBICS", "full": "askBICS data assistant" },
+  "description": {
+    "short": "Ask questions about your authorised Power BI data.",
+    "full": "askBICS for Teams: open Ask for autocomplete, tables, matrices, interactive charts, saved report layouts and PDF export using the askBICS visual interface. Private chat also supports model questions. Sign in with your work account; answers use your Power BI permissions. Report slicers are not inherited."
+  },
+  "icons": { "outline": "outline.png", "color": "color.png" },
+  "accentColor": "#2563EB",
+  "staticTabs": [{ "entityId": "ask", "name": "Ask", "contentUrl": "${TAB_ORIGIN}/ask/", "websiteUrl": "${TAB_ORIGIN}/ask/", "scopes": ["personal"] }],
+  "bots": [{
+    "botId": "${CLIENT_ID}", "scopes": ["personal"], "isNotificationOnly": false, "supportsFiles": false,
+    "commandLists": [{ "scopes": ["personal"], "commands": [
+      { "title": "ask", "description": "Build a question with searchable fields and values" },
+      { "title": "help", "description": "Show available question examples" },
+      { "title": "signin", "description": "Sign in to your Power BI account" },
+      { "title": "signout", "description": "Sign out of Power BI" }
+    ] }]
+  }],
+  "permissions": ["identity"],
+  "validDomains": ["token.botframework.com", "${TAB_HOST}"],
+  "webApplicationInfo": { "id": "${CLIENT_ID}", "resource": "api://botid-${CLIENT_ID}" }
+}

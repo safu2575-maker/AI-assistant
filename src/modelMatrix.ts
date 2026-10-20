@@ -10,7 +10,7 @@ export function readModelMatrix(matrix?: powerbi.DataViewMatrix): ModelMatrixDat
     if (!matrix) return undefined;
     const levels = matrix.rows.levels;
     const fields = levels.flatMap(level => level.sources);
-    const measures = matrix.valueSources;
+    const measures = matrix.valueSources.map(source => ({ ...source, isMeasure: true, roles: { ...source.roles, measures: true } }));
     const rows: powerbi.DataViewTableRow[] = [];
     const hierarchy: ModelMatrixData["hierarchy"] = [];
     let totals: powerbi.PrimitiveValue[] | undefined;
@@ -33,6 +33,8 @@ export function readModelMatrix(matrix?: powerbi.DataViewMatrix): ModelMatrixDat
         else if (next.length === fields.length) rows.push([...next, ...values(node)]);
     };
     if (matrix.rows.root.values) totals = values(matrix.rows.root);
+    // A measure-only matrix stores its single result on the root.
+    if (!fields.length && totals) rows.push([...totals]);
     (matrix.rows.root.children || []).forEach(node => visit(node, []));
     return { table: { columns: [...fields, ...measures], rows, totals: totals ? [...fields.map(() => null), ...totals] as powerbi.DataViewTable["totals"] : undefined }, hierarchy };
 }

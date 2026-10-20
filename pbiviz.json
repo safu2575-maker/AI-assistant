@@ -4,7 +4,7 @@
     "displayName": "askBICS Assistant",
     "guid": "askBICSAssistantBBA47C69F49C41FB89A0801541EF7FD9",
     "visualClassName": "Visual",
-    "version": "2.9.89.0",
+    "version": "2.9.101.0",
     "description": "Global natural-language Q&A for any Power BI dataset",
     "supportUrl": "https://infobics.com",
     "gitHubUrl": ""
