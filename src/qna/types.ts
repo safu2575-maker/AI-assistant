@@ -27,6 +27,8 @@ export interface QnaContext {
 
 export type ModelSelection = Array<{ table: string; column?: string; hierarchy?: string; hierarchyLevel?: string; dateDay?: boolean; value: string | number | boolean }>;
 export interface QnaTable {
+    revenueColumns?: Array<{ source: string; column: string }>;
+    columnQuestions?: Record<string, { question: string; measure: string }>;
     modelPeriods?: Array<{ sourceColumn: number; period: string; question: string; measure: string; groupCount: number }>;
     modelRowSelections?: ModelSelection[][];
     modelCellSelections?: ModelSelection[][][];
@@ -61,7 +63,7 @@ export interface QnaLayoutSettings {
     defaultMeasure?: string;
     additiveMeasures?: string[];
     startup?: { enabled: boolean; fields: string[]; measure: string };
-    revenue?: { field: string; value: string };
+    revenue?: { field: string; value: string; childFields?: string[] };
     synonyms?: Record<string, string[]>;
     synonymEnabled?: Record<string, boolean>;
 }

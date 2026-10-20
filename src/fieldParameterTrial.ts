@@ -541,7 +541,20 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             const answers: QnaResponse[] = [];
             for (const plan of plans) {
                 if (revision !== this.questionRevision) throw new Error("Query cancelled.");
-                answers.push(await this.request({ ...plan, presentation: plan.presentation && plan.presentation !== "matrix" ? plan.presentation : "table" }, config, refresh));
+                const answer = await this.request({ ...plan, presentation: plan.presentation && plan.presentation !== "matrix" ? plan.presentation : "table" }, config, refresh);
+                if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+                if (answer.table && !plan.listOnly && !plan.totalOnly && !plan.rank &&
+                    plan.measures.some((_, index) => !answer.table!.modelTotals?.[plan.groups.length + index] || answer.table!.modelTotals![plan.groups.length + index] === "—")) {
+                    // Each comparison column has its own date/filter context.
+                    // Categorical responses often contain cells but no aggregate metadata.
+                    const scalar = await this.request({...plan, groups: [], presentation: "table", totalOnly: false, rank: undefined}, config, refresh);
+                    if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+                    if (scalar.table?.rows.length === 1) {
+                        answer.table.modelTotals = ["Grand Total", ...Array(Math.max(0, plan.groups.length - 1)).fill(""), ...scalar.table.rows[0]];
+                        answer.table.modelRawTotals = [...plan.groups.map(() => null), ...(scalar.table.modelRawRows?.[0] || plan.measures.map(() => null))];
+                    }
+                }
+                answers.push(answer);
             }
             const count = plans[0].groups.length;
             if (!answers.every(answer => answer.table) || plans.some(plan => plan.listOnly || plan.totalOnly)) throw new Error("Choose grouping fields and a measure for the comparison.");
@@ -618,7 +631,15 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             const rowTotals = new Map((existingRowTotals ? answer.table.rows : rowAnswer?.table?.rows || []).map(row => [JSON.stringify(row.slice(0, rowCount)), row.slice(existingRowTotals ? width : rowCount)]));
             const columnCount = pivot.columnFields?.length || 1;
             const columnTotals = new Map((columnAnswer.table?.rows || []).map(row => [row.slice(0, columnCount).join(" · "), row.slice(columnCount)]));
-            const grand = rowAnswer?.table?.modelTotals?.slice(rowCount) || columnAnswer.table?.modelTotals?.slice(columnCount) || answer.table.modelTotals?.slice(-measureCount) || pivot.measures.map(() => "—");
+            let grand = [rowAnswer?.table?.modelTotals?.slice(rowCount), columnAnswer.table?.modelTotals?.slice(columnCount), answer.table.modelTotals?.slice(-measureCount)]
+                .find(values => values?.length === measureCount && values.every(value => value !== "—"));
+            if (!grand) {
+                // Evaluate the measure without grouping; adding visible cells is invalid
+                // for averages, distinct counts, ratios, and other non-additive measures.
+                const scalar = await this.request({ ...plan, groups: [], presentation: "table", totalOnly: false, rank: undefined }, config, refresh);
+                if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+                grand = scalar.table?.rows.length === 1 ? scalar.table.rows[0].slice(0, measureCount) : pivot.measures.map(() => "—");
+            }
             answer.table.columns = [...answer.table.columns.slice(0, width), ...pivot.measures.map(measure => measureCount === 1 ? "Total" : `${measure} Total`)];
             answer.table.modelCellSelections = answer.table.modelCellSelections?.map((cells, index) => [...cells.slice(0, width), ...pivot.measures.map(() => answer.table!.modelRowSelections?.[index] || [])]);
             answer.table.rows = answer.table.rows.map(row => [...row.slice(0, width), ...(rowTotals.get(JSON.stringify(row.slice(0, rowCount))) || pivot.measures.map(() => "—"))]);
@@ -632,6 +653,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         return this.requestBase(plan, config, refresh);
     }
     private requestBase(plan: ParameterPlan, config: ParameterConfig, refresh = false): Promise<QnaResponse> {
+        if (!plan.groups.length) return this.requestScalarWithGrouping(plan, config, refresh);
         if (this.fieldOnlyBinding && plan.measures.length) return Promise.reject(new Error("This visual is configured for field-only lists. Add a measure or Measure Selector to Measures and KPIs to ask measure questions."));
         this.dataRequestsStopped = false;
         this.onProgress?.("Checking available data…");
@@ -659,6 +681,34 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
                     this.clearPendingFilters();
                 } else this.sendPending();            } catch (error) { this.fail(`Could not request model data: ${String(error)}`); }
         });
+    }
+
+    private async requestScalarWithGrouping(plan: ParameterPlan, config: ParameterConfig, refresh: boolean): Promise<QnaResponse> {
+        // An empty field-parameter selection can remove the entire host data
+        // shape, even when a measure parameter remains bound. Never send it.
+        const fixedField = config.fields.find(field => config.options.includes(field.name) && plan.filters.some(filter => {
+            const basic = filter as any;
+            return basic.target?.table === field.table && basic.target?.column === field.column &&
+                basic.operator === "In" && basic.values?.length === 1;
+        }));
+        const anchor = fixedField?.name || config.options[0];
+        if (!anchor) throw new Error("Keep at least one grouping field available in Data setup.");
+        const response = await this.requestBase({...plan, groups: [anchor], totalOnly: false, presentation: "table", rank: undefined}, config, refresh);
+        const table = response.table;
+        if (!table) throw new Error("Power BI did not return the grouped measure data.");
+        // A fixed revenue member is evaluated directly in its requested context.
+        // Otherwise use only host aggregate metadata, never sums of grouped cells.
+        const fixedRow = fixedField && table.rows.length === 1 ? 0 : undefined;
+        const raw = plan.measures.map((measure, i) => {
+            const column = table.columns.indexOf(measure);
+            return fixedRow !== undefined ? table.modelRawRows?.[fixedRow]?.[column] ?? null : table.modelRawTotals?.[column] ?? null;
+        });
+        const formats = plan.measures.map(measure => table.modelFormats?.[table.columns.indexOf(measure)]);
+        const values = raw.map((value, index) => value === null ? "—" : formatPowerBiValue(value, formats[index]));
+        return {text: response.text, modelQuery: true, table: {
+            columns: plan.measures, rows: [values], rowIndices: [[]], modelRawRows: [raw],
+            modelTotals: values, modelRawTotals: raw, modelFormats: formats
+        }};
     }
 
     private clearPendingFilters(): void {
@@ -931,8 +981,9 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
     private expandedDateValues = new WeakMap<object, Array<string | number | boolean>>();
 
     private answer(dataView: powerbi.DataView, plan: ParameterPlan): QnaResponse {
-        let table = dataView.table || categoricalAsTable(dataView.categorical) || readModelMatrix(dataView.matrix)?.table;
-        if (!table) throw new Error("Power BI returned no data table.");
+        const sourceTable = dataView.table || categoricalAsTable(dataView.categorical) || readModelMatrix(dataView.matrix)?.table;
+        if (!sourceTable) throw new Error("Power BI returned no data table.");
+        let table: powerbi.DataViewTable = sourceTable;
         const time = this.requestConfig?.time;
         if (!plan.rank && (plan.listOnly || plan.groups.some(name=>timeFieldOrder(name)>=0 || name === time?.yearField || name === time?.monthField))) {
             const columns = plan.groups.map(name=>table!.columns.findIndex(column=>column.displayName === name));
@@ -978,9 +1029,25 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             result.table!.rowIndices = result.table!.rows.map(() => []);
             return result;
         }
-        // Only model-supplied totals are valid for ratios, averages and distinct counts.
+        // V3 default: prefer model totals, otherwise sum complete returned values.
+        // Derived percentage totals must retain their numerator/denominator logic.
+        if (!dataView.metadata.segment && !plan.rank) {
+            const totals = table.totals?.slice() || table.columns.map(() => null);
+            plan.measures.forEach(name => {
+                const column = table.columns.findIndex(item => item.displayName === name);
+                if (column < 0 || totals[column] != null || table.columns[column].format?.includes("%")) return;
+                const values = (table.rows || []).map(row => row[column]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+                if (values.length) totals[column] = values.reduce((sum, value) => sum + value, 0);
+            });
+            table = {...table, totals: totals as powerbi.DataViewTable["totals"]};
+            result.table!.modelRawTotals = indices.map(index => typeof totals[index] === "number" ? Number(totals[index]) : null);
+        }
+        // Other measures require model-supplied totals.
         if (table.totals && plan.measures.every(name => table.columns.some(column => column.displayName === name))) {
             result.table!.modelTotals = indices.map((index, position) => position < plan.groups.length ? (position === 0 ? "Grand Total" : "") : typeof table.totals![index] === "number" ? formatPowerBiValue(Number(table.totals![index]), table.columns[index].format) : "—");
+        }
+        if (!result.table!.modelTotals && plan.measures.length) {
+            result.table!.modelTotals = [...plan.groups.map((_, index) => index === 0 ? "Grand Total" : ""), ...plan.measures.map(() => "—")];
         }
         if (plan.totalOnly) {
             if (!result.table?.modelTotals) throw new Error("Power BI did not return the total for this measure. Refresh the visual to load model totals.");

@@ -16,7 +16,11 @@ export function categoricalAsTable(categorical: powerbi.DataViewCategorical | un
         for (const column of values) row[columnIndex++] = column.values[rowIndex] ?? null;
         rows[rowIndex] = row;
     }
-    const totals = columns.map((column) => column.aggregates?.subtotal ?? column.aggregates?.single ?? null);
+    const totals = columns.map((column, index) => {
+        // Older categorical hosts expose aggregates on the value column itself.
+        const legacy = index >= categories.length ? values[index - categories.length] : undefined;
+        return column.aggregates?.subtotal ?? column.aggregates?.single ?? legacy?.subtotal ?? legacy?.single ?? null;
+    });
     // Blank totals are null at runtime, although the SDK excludes null here.
     return { columns, rows, totals: totals as powerbi.DataViewTable["totals"] };
 }

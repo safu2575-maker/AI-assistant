@@ -3,6 +3,14 @@ import type powerbi from 'powerbi-visuals-api';
 import { ParameterConfig, ParameterPlan } from './parameterQuery';
 import { QnaResponse, QnaTable } from './qna/types';
 
+/** Defaults for the accounting hierarchy explicitly supported by the setup UI. */
+export function revenueChildFields(revenue: {field: string; childFields?: string[]}, fields: string[]): string[] {
+    if (revenue.childFields) return revenue.childFields.filter(name => name !== revenue.field);
+    const normalize = (name: string) => name.toLowerCase().replace(/[\s_-]/g, "");
+    return normalize(revenue.field) === "lineitem"
+        ? fields.filter(name => ["details", "gldescription"].includes(normalize(name))) : [];
+}
+
 /** Recognize only an explicit request; configuring Revenue does not change ordinary answers. */
 export function revenueQuestion(question: string): { question: string; enabled: boolean } {
     const pattern = /(?:\bas\s+)?(?:\bpercentage|\bpercent|%)\s+of\s+revenue\b/i;
@@ -13,16 +21,39 @@ export async function revenueRequest(plan: ParameterPlan, config: ParameterConfi
     const revenue = config.revenue, field = config.fields.find(f => f.name === revenue?.field);
     if (!field || (typeof revenue?.value !== "string" || !revenue.value.trim())) throw new Error('Configure the Revenue field and value in Settings > Percentage of Revenue.');
     if (!plan.measures.length || plan.listOnly) throw new Error('Name a measure to calculate Percentage of Revenue.');
-    const denominatorGroups = plan.groups.filter(name => name !== field.name);
+    const hierarchy = new Set([field.name, ...revenueChildFields(revenue!, config.fields.map(item => item.name))]);
+    const denominatorGroups = plan.groups.filter(name => !hierarchy.has(name));
     const target = { table: field.table, column: field.column };
-    // Replacing a tuple containing the revenue dimension could discard other predicates.
-    if (plan.filters.some(f => Array.isArray(f.target) && f.target.some(t => t.table === field.table && t.column === field.column))) throw new Error('Use a separate revenue-field filter instead of a combined tuple filter for Percentage of Revenue.');
+    const hierarchyTargets = config.fields.filter(item => hierarchy.has(item.name));
+    const isHierarchyTarget = (target: any) => hierarchyTargets.some(item => target?.table === item.table && target?.column === item.column);
     const raw: ParameterPlan = { ...plan, presentation: 'table', totalOnly: false, rank: undefined };
-    const numerator = (await load(raw)).table;
-    const filters = plan.filters.filter(f => !(!Array.isArray(f.target) && (f.target as any).table === target.table && (f.target as any).column === target.column));
+    const loadTotals = async (query: ParameterPlan): Promise<QnaTable | undefined> => {
+        const table = (await load(query)).table;
+        if (!table) return table;
+        if (query.groups.length === 0 && table.rows.length === 1) {
+            table.modelRawTotals = table.modelRawRows?.[0];
+        } else if (plan.measures.some((_, i) => table.modelRawTotals?.[query.groups.length + i] == null)) {
+            const scalar = (await load({...query, groups: []})).table;
+            if (scalar?.rows.length === 1) table.modelRawTotals = [...query.groups.map(() => null), ...(scalar.modelRawRows?.[0] || plan.measures.map(() => null))];
+        }
+        return table;
+    };
+    const numerator = await loadTotals(raw);
+    const filters = plan.filters.flatMap(filter => {
+        if (!Array.isArray(filter.target)) return isHierarchyTarget(filter.target) ? [] : [filter];
+        const retained = filter.target.map((target, index) => isHierarchyTarget(target) ? -1 : index).filter(index => index >= 0);
+        if (retained.length === filter.target.length) return [filter];
+        if (!retained.length) return [];
+        const tuple = filter as any;
+        if (tuple.operator !== "In" || !Array.isArray(tuple.values)) throw new Error("This combined accounting filter cannot be separated safely. Use individual field filters for Percentage of Revenue.");
+        const values = [...new Map(tuple.values.map((row: any[]) => {
+            const value = retained.map(index => row[index]); return [JSON.stringify(value), value];
+        })).values()];
+        return [{...filter, target: retained.map(index => (filter.target as any[])[index]), values} as any];
+    });
     let revenueValue: string | number = revenue.value;
     if (field.type === 'number') { revenueValue = Number(revenue.value); if (!Number.isFinite(revenueValue)) throw new Error('Revenue value must be numeric for this field.'); }
-    const denominator = (await load({ ...raw, groups: denominatorGroups, filters: [...filters, new BasicFilter(target, "In", [revenueValue]).toJSON()] })).table;
+    const denominator = await loadTotals({ ...raw, groups: denominatorGroups, filters: [...filters, new BasicFilter(target, "In", [revenueValue]).toJSON()] });
     if (!numerator || !denominator) throw new Error('Revenue calculation requires model-backed numeric results.');
     const key = (table: QnaTable, row: string[]) => JSON.stringify(denominatorGroups.map(name => row[table.columns.indexOf(name)]));
     const amounts = new Map(denominator.rows.map((row, index) => [key(denominator, row), denominator.modelRawRows?.[index]]));

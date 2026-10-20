@@ -47,6 +47,15 @@ try{
  assert.match(await columnHeader.locator('.askbics-qna__column-status').innerText(), /↓/);
  await columnHeader.getByRole('button', {name:/Remove sorting/}).click();
  assert.equal(await columnHeader.getAttribute('aria-sort'), 'none');
+ await columnHeader.click({button:'right'});
+ assert.deepEqual(await page.locator('.askbics-qna__period-menu > button').allTextContents(),
+  ['Sort›','Filter›','Show data bars','Show % of revenue','Show % of grand total','Custom formula…']);
+ await page.getByRole('button',{name:'Show data bars',exact:true}).click();
+ assert.ok(await page.locator('.askbics-qna__table .askbics-qna__data-bar').count() > 0);
+ await page.getByRole('button',{name:'Open Q&A, autocomplete, table, and matrix settings'}).click();
+ await page.getByRole('button',{name:'Table & matrix',exact:true}).click();
+ assert.equal(await page.getByText('Grand totals',{exact:true}).count(),0);
+ await page.getByRole('button',{name:'Cancel',exact:true}).click();
  await page.screenshot({path:'test-output/table.png'});
  await ask('Matrix; rows: Assigned Group; columns: City; values: Sales Measure');
  await page.waitForFunction(()=>document.querySelector('.askbics-qna__table')?.textContent?.includes('45'));
@@ -80,6 +89,7 @@ try{
  await page.getByLabel('Revenue value',{exact:true}).press('ArrowDown');
  await page.getByLabel('Revenue value',{exact:true}).press('Enter');
  assert.equal(await page.getByLabel('Revenue value',{exact:true}).inputValue(),'Furniture');
+ await page.getByRole('checkbox',{name:'Revenue hierarchy child: Assigned Tenant Name',exact:true}).check();
  await page.screenshot({path:'test-output/revenue-settings.png'});
  if(process.env.TEST_POWERBI_SETTINGS) {
   await page.getByRole('button',{name:'Startup loading',exact:true}).click();
@@ -94,7 +104,22 @@ try{
  await new Promise(resolve=>setTimeout(resolve,1000));
  assert.equal(stored.savedReports.length,1);
  if(process.env.TEST_POWERBI_SETTINGS) assert.deepEqual(stored.layoutSettings.startup,{enabled:true,fields:['City'],measure:'Rent Measure'});
- assert.deepEqual(stored.layoutSettings.revenue,{field:"Assigned Group",value:"Furniture"});
+ assert.deepEqual(stored.layoutSettings.revenue,{field:"Assigned Group",value:"Furniture",childFields:["Assigned Tenant Name"]});
+ await ask('Matrix; rows: Assigned Group; columns: City; values: Rent Measure');
+ const matrixCard = page.locator('.askbics-qna__table-card').last();
+ const revenueHeader = matrixCard.locator('th[data-column-index="1"]');
+ await revenueHeader.getByRole('button',{name:/More options/}).click();
+ await page.getByRole('button',{name:'Show % of revenue',exact:true}).click();
+ await matrixCard.locator('th[data-column-index="2"]').filter({hasText:'% of revenue'}).waitFor();
+ assert.match(await matrixCard.innerText(), /100\.00%/);
+ assert.match(await matrixCard.innerText(), /133\.33%/);
+ await matrixCard.locator('th[data-column-index="1"]').getByRole('button',{name:/More options/}).click();
+ await page.getByRole('button',{name:'Hide % of revenue',exact:true}).click();
+ await matrixCard.locator('th[data-column-index="2"]').waitFor({state:'hidden'});
+ await matrixCard.locator('th[data-column-index="1"]').getByRole('button',{name:/More options/}).click();
+ await page.getByRole('button',{name:'Show % of revenue',exact:true}).click();
+ await matrixCard.locator('th[data-column-index="2"]').waitFor({state:'visible'});
+ await page.screenshot({path:'test-output/revenue-column.png'});
  await page.reload();
  await page.waitForFunction(()=>document.querySelector('.askbics-qna__saved-button b')?.textContent==='1');
  await page.getByRole('button',{name:'Open saved reports',exact:true}).click();

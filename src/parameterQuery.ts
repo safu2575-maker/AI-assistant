@@ -23,7 +23,7 @@ export interface ParameterConfig {
     groupAliases?: Record<string, string[]>;
     defaultMeasure?: string;
     additiveMeasures?: string[];
-    revenue?: { field: string; value: string };
+    revenue?: { field: string; value: string; childFields?: string[] };
     revenuePercentage?: boolean;
     time?: TimeSetup;
 }

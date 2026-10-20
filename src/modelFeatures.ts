@@ -22,7 +22,7 @@ export function modelHierarchy(source: QnaTable, model: ModelMatrixData, groups:
 }
 
 /** Append a separately evaluated period measure, including its model total and selection context. */
-export function appendPeriodResult(source: QnaTable, result: QnaTable, sourceColumn: number, kind: "YTD" | "TTM", measure: string, groupCount: number): QnaTable {
+export function appendPeriodResult(source: QnaTable, result: QnaTable, sourceColumn: number, kind: "YTD" | "TTM" | "% of revenue", measure: string, groupCount: number): QnaTable {
     const measureColumn = result.columns.indexOf(measure);
     if (measureColumn < 0) throw new Error(`The model did not return ${measure}.`);
     const lookup = new Map(result.rows.map((row, index) => [JSON.stringify(row.slice(0, groupCount)), index]));
@@ -46,9 +46,11 @@ export function appendPeriodResult(source: QnaTable, result: QnaTable, sourceCol
     };
     const matchedRows = source.rows.map(row => lookup.get(JSON.stringify(row.slice(0, groupCount))));
     const selections = matchedRows.map(index => {
-        return index === undefined ? [] : result.modelRowSelections?.[index] || [];
+        return index === undefined ? [] : result.modelCellSelections?.[index]?.[measureColumn] || result.modelRowSelections?.[index] || [];
     });
-    return { ...source, ...shiftedMetadata, columns: insert(source.columns, `${source.columns[sourceColumn]} ${kind}`),
+    const derivedName = `${source.columns[sourceColumn]} ${kind}`;
+    return { ...source, ...shiftedMetadata, columns: insert(source.columns, derivedName),
+        revenueColumns: kind === "% of revenue" ? [...(source.revenueColumns || []), {source: source.columns[sourceColumn], column: derivedName}] : source.revenueColumns,
         rows: source.rows.map((row, rowIndex) => {
             if (/^(?:grand )?total$/i.test(row[0])) return insert(row, result.modelTotals?.[measureColumn] || "—");
             const index = matchedRows[rowIndex];

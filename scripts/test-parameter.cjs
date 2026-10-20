@@ -231,6 +231,10 @@ const appended = appendPeriodResult(periodSource, periodAnswer, 1, 'YTD', 'Rent 
 assert.deepEqual(appended.rows, [['A','10','100'],['B','20','200'],['Grand Total','25','250']]);
 assert.deepEqual(appended.ytdColumns, [{sourceColumn:1,ytdColumn:2}]);
 assert.equal(appended.modelCellSelections[0][2][0][0].value, 'A', 'derived selection follows row identity rather than response order');
+const revenueColumn = appendPeriodResult(periodSource, {...periodAnswer, rows:[['B','20.00%'],['A','10.00%']], modelTotals:['Grand Total','12.50%']}, 1, '% of revenue', 'Rent Measure', 1);
+assert.deepEqual(revenueColumn.columns, ['Tenant','June 2025','June 2025 % of revenue']);
+assert.deepEqual(revenueColumn.rows, [['A','10','10.00%'],['B','20','20.00%'],['Grand Total','25','12.50%']]);
+assert.deepEqual(revenueColumn.revenueColumns,[{source:'June 2025',column:'June 2025 % of revenue'}]);
 const comparisonSource = {...periodSource,columns:['Tenant','June 2024','June 2025'],rows:[['A','10','20']],modelTotals:['Grand Total','10','20'],modelCellSelections:[[[],[],periodAnswer.modelRowSelections[0]]],modelPeriods:[{sourceColumn:2,period:'June 2025'}],hiddenColumns:[2],__percentageColumns:[{sourceColumn:2,grandColumn:2}],__calculatedColumns:[2]};
 for (const firstKind of ['YTD','TTM']) {
  const first = appendPeriodResult(comparisonSource,periodAnswer,1,firstKind,'Rent Measure',1);
@@ -459,6 +463,99 @@ assert.deepEqual(discovered.groupingOptions(),config.options,'saved manual optio
 discovered.destroy();
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 (async () => {
+  const sumController = Object.create(FieldParameterTrial.prototype);
+  sumController.requestConfig = config;
+  const sumView = {metadata:{columns:[]},table:{
+    columns:[{displayName:'City',roles:{fields:true}},{displayName:'Rent Measure',roles:{measures:true},format:'0'}],
+    rows:[['Electronics',182543],['Home and Lifestyle',109228],['Fashion',98754],['Food and Beverage',70324]],totals:[null,null]}};
+  const sumPlan={groups:['City'],measures:['Rent Measure'],filters:[],summary:[],presentation:'table'};
+  assert.equal(sumController.answer(sumView,sumPlan).table.modelTotals[1],'460,849');
+  assert.equal(sumView.table.totals[1],null,'total fallback must not mutate the host response or cache');
+  sumController.requestConfig = config;
+  assert.equal(sumController.answer(sumView,sumPlan).table.modelTotals[1],'460,849','V3 fallback works without configuration');
+  sumController.requestConfig = config;
+  assert.equal(sumController.answer({...sumView,table:{...sumView.table,totals:[null,123]}},sumPlan).table.modelTotals[1],'123','host total is authoritative');
+  assert.equal(sumController.answer({...sumView,metadata:{columns:[],segment:{}}},sumPlan).table.modelTotals[1],'—','partial data cannot produce a summed total');
+  const safeScalar = Object.create(FieldParameterTrial.prototype);
+  const safeConfig = {...config, options:['LineItem'], fields:[{name:'LineItem',table:'Ledger',column:'LineItem'}]};
+  const scalarCalls = [];
+  safeScalar.requestBase = async query => {
+    scalarCalls.push(query);
+    return {text:'',table:{columns:['LineItem','Amount'],rows:[['Revenue','100']],rowIndices:[[]],modelRawRows:[[null,100]],modelRawTotals:[null,null],modelFormats:[undefined,'0']}};
+  };
+  const denominatorFilter = {target:{table:'Ledger',column:'LineItem'},operator:'In',values:['Revenue']};
+  const denominator = await safeScalar.requestScalarWithGrouping({groups:[],measures:['Amount'],filters:[denominatorFilter],summary:[]},safeConfig,false);
+  assert.deepEqual(scalarCalls[0].groups,['LineItem'],'scalar requests retain a nonempty field parameter');
+  assert.deepEqual(scalarCalls[0].filters,[denominatorFilter],'revenue-member filter is preserved');
+  assert.deepEqual(denominator.table.modelRawRows,[[100]],'fixed revenue member supplies the denominator even without aggregate metadata');
+  const unavailableTotal = await safeScalar.requestScalarWithGrouping({groups:[],measures:['Amount'],filters:[],summary:[]},safeConfig,false);
+  assert.deepEqual(unavailableTotal.table.rows,[['—']],'one arbitrary visible group is not an overall model total');
+  const {revenueRequest}=require('../.tmp/test/revenue');
+  const revenueLoads=[];
+  const revenuePlan={groups:['LineItem'],measures:['Amount'],filters:[],summary:[],presentation:'table'};
+  const revenueConfig={...config,fields:[{name:'LineItem',table:'Ledger',column:'LineItem'}],revenue:{field:'LineItem',value:'Revenue'}};
+  let revenueView;
+  await revenueRequest(revenuePlan,revenueConfig,async query=>{
+    revenueLoads.push(query);
+    const denominator=query.filters.length>0;
+    return {text:'',table:query.groups.length
+      ? {columns:['LineItem','Amount'],rows:[['Cost','20'],['Other','30']],rowIndices:[[],[]],modelRawRows:[[null,20],[null,30]],modelRawTotals:[null,null]}
+      : {columns:['Amount'],rows:[[String(denominator?100:40)]],rowIndices:[[]],modelRawRows:[[denominator?100:40]],modelRawTotals:[null]}};
+  },view=>{revenueView=view;return {text:''};});
+  assert.equal(revenueLoads.length,3,'revenue requests an ungrouped numerator only when aggregate metadata is missing');
+  assert.deepEqual(revenueView.table.rows,[['Cost',0.2],['Other',0.3]]);
+  assert.deepEqual(revenueView.table.totals,[null,0.4],'revenue grand total uses the scalar numerator, not the sum of displayed rows');
+  const accountingFields = ['LineItem','Details','GL Description','Year','Property'].map(name=>({name,table:'Ledger',column:name}));
+  const accountingConfig = {...config,fields:accountingFields,revenue:{field:'LineItem',value:'Total Net Revenue'}};
+  const {revenueChildFields} = require('../.tmp/test/revenue');
+  assert.deepEqual(revenueChildFields(accountingConfig.revenue,accountingFields.map(f=>f.name)),['Details','GL Description']);
+  assert.deepEqual(revenueChildFields({...accountingConfig.revenue,childFields:[]},accountingFields.map(f=>f.name)),[],'an explicit override can disable the accounting defaults');
+  assert.deepEqual(revenueChildFields({field:'Category',childFields:['Account']},['Category','Account','Year']),['Account'],'custom hierarchy names are supported');
+  const yearFilter = {target:{table:'Ledger',column:'Year'},operator:'In',values:[2026]};
+  const propertyFilter = {target:{table:'Ledger',column:'Property'},operator:'In',values:['Mall A']};
+  for (const [item,details] of [
+    ['Rental Revenue',[['Rental Revenue',-380407050]]],
+    ['FM',[['FM Contracts',11405439],['Housekeeping',10808788]]],
+    ['Total Net Revenue',[['Landlord Incentive',15070479],['Rental Revenue',-380407050]]]
+  ]) {
+    const filters = [yearFilter,propertyFilter,{target:{table:'Ledger',column:'LineItem'},operator:'In',values:[item]},
+      {target:{table:'Ledger',column:'Details'},operator:'In',values:details.map(row=>row[0])}];
+    const request = {groups:['Details','Year'],measures:['Amount'],filters,summary:[],presentation:'table'};
+    let calls = 0, rendered;
+    await revenueRequest(request,accountingConfig,async query=>{
+      calls++;
+      if(calls===1) {
+        assert.deepEqual(query.groups,['Details','Year']);
+        assert.deepEqual(query.filters,filters);
+        return {text:'',table:{columns:['Details','Year','Amount'],rows:details.map(([name,amount])=>[name,'2026',String(amount)]),
+          rowIndices:details.map(()=>[]),modelRawRows:details.map(([,amount])=>[null,2026,amount]),
+          modelRawTotals:[null,null,details.reduce((sum,row)=>sum+row[1],0)]}};
+      }
+      assert.deepEqual(query.groups,['Year'],'child grouping is excluded while the period is retained');
+      assert.deepEqual(query.filters.slice(0,2),[yearFilter,propertyFilter],'unrelated filters survive unchanged');
+      assert.equal(query.filters.length,3,'both accounting parent and child restrictions are replaced');
+      assert.deepEqual(query.filters[2].values,['Total Net Revenue']);
+      return {text:'',table:{columns:['Year','Amount'],rows:[['2026','-518511038']],rowIndices:[[]],
+        modelRawRows:[[2026,-518511038]],modelRawTotals:[null,-518511038]}};
+    },view=>{rendered=view;return {text:''};});
+    assert.equal(calls,2,'hierarchy shares one denominator request across child rows');
+    details.forEach((row,index)=>assert.equal(rendered.table.rows[index][2],row[1]/-518511038));
+    assert.equal(rendered.table.totals[2],details.reduce((sum,row)=>sum+row[1],0)/-518511038);
+    if(details.length===1) assert.equal(rendered.table.rows[0][2],rendered.table.totals[2],'single detail and total use the same denominator');
+  }
+  const mixedTuple = {target:[{table:'Ledger',column:'Details'},{table:'Ledger',column:'Year'}],operator:'In',
+    values:[[{value:'FM Contracts'},{value:2026}],[{value:'Security'},{value:2026}]]};
+  const tupleBefore = JSON.stringify(mixedTuple);
+  let tupleCalls=0;
+  await revenueRequest({groups:['Year'],measures:['Amount'],filters:[mixedTuple,propertyFilter],summary:[]},accountingConfig,async query=>{
+    if(++tupleCalls===2) {
+      assert.deepEqual(query.filters[0].target,[{table:'Ledger',column:'Year'}]);
+      assert.deepEqual(query.filters[0].values,[[{value:2026}]],'removing accounting tuple components retains and deduplicates the period restriction');
+      assert.deepEqual(query.filters[1],propertyFilter);
+    }
+    return {text:'',table:{columns:['Year','Amount'],rows:[['2026','100']],rowIndices:[[]],modelRawRows:[[2026,100]],modelRawTotals:[null,100]}};
+  },()=>({text:''}));
+  assert.equal(JSON.stringify(mixedTuple),tupleBefore,'denominator changes cannot mutate numerator filters');
   const fieldOnly = new FieldParameterTrial({prepend(){}}, {applyJsonFilter(){},persistProperties(){}});
   fieldOnly.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(selectiveConfig)}}}});
   fieldOnly.defaultMeasure=()=> 'Rent Measure';
@@ -562,6 +659,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     const year=requested.filters[0].conditions[0].value.slice(0,4);
     const value=year==='2024'?12:34;
     const selection=[[{table:'Calendar',column:'Year',value:Number(year)}]];
+    if (!requested.groups.length) return {text:'',table:{columns:['Rent Measure'],rows:[[String(value)]],rowIndices:[[]]}};
     assert.equal(requested.presentation,'line','comparison must preserve requested chart');
     return {modelQuery:true,text:'',table:{columns:['City','Rent Measure'],rows:[['Riyadh',String(value)]],rowIndices:[[]],modelRowSelections:[selection],modelEditor:{rows:['City'],columns:[],measures:['Rent Measure'],filters:[{field:'MonthIndex',values:[String(Number(year)*12+6)]},{field:'Tenant',values:['Tech Hub']},{field:'Tenant',values:['Tech Hub']}]}},
       chart:{type:'line',title:'',labels:['Riyadh'],values:[value],valueLabels:[String(value)],rowIndices:[[0]],modelRowSelections:[selection]}};
@@ -694,6 +792,8 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert.deepEqual(sparseTrial.measureOptions(),['Rent Measure'],'an empty transient update must not erase measure discovery');
   sparseTrial.destroy();
   const {categoricalAsTable,buildContext}=require('../.tmp/test/dataAdapter');
+  assert.deepEqual(categoricalAsTable({values:[{source:{displayName:'Amount'},values:[12,18],subtotal:25}]}).totals,[25],'legacy host subtotal must be read without summing cells');
+  assert.deepEqual(categoricalAsTable({values:[{source:{displayName:'Amount',aggregates:{subtotal:0}},values:[12,18],subtotal:25}]}).totals,[0],'current aggregate metadata including zero takes precedence');
   assert.deepEqual(buildContext(categoricalAsTable({values:[{source:{displayName:'Amount'},values:[42]}]})).measures.map(m=>m.name),['Amount']);
   assert.deepEqual(buildContext({columns:[{displayName:'Amount',isMeasure:true}],rows:[[42]]}).measures.map(m=>m.name),['Amount']);
   const directTrial = new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
@@ -943,10 +1043,11 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert.equal(calls.at(-1)[0][1].conditions[0].value, '2024-06-01T00:00:00.000Z');
   trial.update(view(['Assigned Tenant Name'], [calls.at(-1)[0][0]], [12]), calls.at(-1)[0].slice(1)); await flush();
   assert.equal(calls.at(-1)[0][1].conditions[0].value, '2025-06-01T00:00:00.000Z');
-  trial.update(view(['Assigned Tenant Name'], [calls.at(-1)[0][0]], [18]), calls.at(-1)[0].slice(1));
+  trial.update(view(['Assigned Tenant Name'], [calls.at(-1)[0][0]], [18]), calls.at(-1)[0].slice(1)); await flush();
   const compared = await comparison;
   assert.deepEqual(compared.table.columns, ['Assigned Tenant Name', 'June 2024', 'June 2025']);
   assert.deepEqual(compared.table.rows[0].slice(1), ['12.00', '18.00']);
+  assert.deepEqual(compared.table.modelTotals, ['Grand Total','12.00','18.00'], 'comparison totals use each complete period by default');
   assert(compared.table.modelRowSelections[0].every(row=>row.some(part=>part.column==='Date' && part.dateDay===true)));
   assert.equal(compared.table.modelRowSelections[0].length, 60, 'comparison row carries both June date windows');
   assert.equal(compared.table.modelCellSelections[0][1].length, 30, 'period cell carries only its own June window');
@@ -977,6 +1078,15 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert.equal(calls.length, repeatCalls, 'a repeated matrix must not rerun its three queries when no data changed');
   repeated.table.rows[0][0] = 'edited';
   assert.notEqual((await trial.prepareQuestion('Rent Measure by City and Year as a matrix')).table.rows[0][0], 'edited', 'render edits cannot corrupt the reusable response');
+  // Categorical hosts can omit all aggregate metadata. V3-style totals are
+  // automatic and do not send an empty grouping selection to the host.
+  trial.queryCache.clear(); trial.responseCache?.clear();
+  const scalarMatrix = trial.executeQuestion('Rent Measure by City and Year as a matrix', true);
+  trial.update(view(['City','Year'], calls.at(-1)[0], [4,6])); await flush();
+  trial.update(view(['City'], calls.at(-1)[0], [5,8])); await flush();
+  trial.update(view(['Year'], calls.at(-1)[0], [7,11])); await flush();
+  assert.deepEqual(calls.at(-1)[0][0].values, ['Year'], 'overall total keeps a valid field-parameter selection');
+  assert.deepEqual((await scalarMatrix).table.modelTotals, ['Grand Total','7.00','11.00','13.00'], 'default total sums the complete row marginal');
   const labelWithMetadata = view(['Parameter'], [], [1]);
   labelWithMetadata.categorical.categories[0].source.expr = { source: { entity: 'Parameter' }, ref: 'Parameter' };
   labelWithMetadata.categorical.categories[0].values = ['Year'];
@@ -1021,10 +1131,14 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   const noEchoComparison = transactional.prepareQuestion('June 2024 vs June 2025 Assigned Tenant Name Rent Measure');
   assert.equal(transactionalCalls.at(-1)[0], null);
   transactional.update(view(['Year'], [])); // acknowledge the clear, then send June 2024
-  transactional.update(view(['Assigned Tenant Name'], [], [12])); await flush();
+  const firstComparisonPeriod = view(['Assigned Tenant Name'], [], [12]);
+  firstComparisonPeriod.categorical.values[0].source.aggregates = {subtotal:12};
+  transactional.update(firstComparisonPeriod); await flush();
   assert.equal(transactionalCalls.at(-1)[0], null); // separate periods cannot reuse old data
   transactional.update(view(['Assigned Tenant Name'], [])); // acknowledge clear, send June 2025
-  transactional.update(view(['Assigned Tenant Name'], [], [18]));
+  const secondComparisonPeriod = view(['Assigned Tenant Name'], [], [18]);
+  secondComparisonPeriod.categorical.values[0].source.aggregates = {subtotal:18};
+  transactional.update(secondComparisonPeriod);
   assert.deepEqual((await noEchoComparison).table.rows[0].slice(1), ['12.00', '18.00']);
   transactional.destroy();
 })().catch(error => { trial.destroy(); console.error(error); process.exitCode = 1; });
