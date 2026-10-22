@@ -753,7 +753,7 @@ assert.deepEqual(matrixToTable.table.columns, ["Product", "Month", "Revenue"], "
 (async () => {
  const {GlobalQnaUi} = require('../.tmp/test/qna/ui');
  const originalDocument = global.document;
- const node = () => ({children:[], handlers:{}, classList:{add(){}}, append(...items){this.children.push(...items)}, appendChild(item){this.children.push(item)}, replaceChildren(){this.children=[]}, setAttribute(){}, remove(){this.removed=true}, addEventListener(name,handler){this.handlers[name]=handler}});
+ const node = () => ({children:[], handlers:{}, classList:{add(){}}, append(...items){this.children.push(...items)}, appendChild(item){this.children.push(item)}, replaceChildren(...items){this.children=items}, setAttribute(){}, remove(){this.removed=true}, addEventListener(name,handler){this.handlers[name]=handler}});
  global.document={createElement:node};
  const ui=Object.create(GlobalQnaUi.prototype);
  Object.assign(ui,{input:{value:'Rent by Year'},questions:[],messages:node(),questionRequest:0,automaticGroupingEnabled:()=>true,engine:{getLayoutSettings:()=>({conversationMode:'latest'})},clearQuestionSelection(){},renderInputHighlight(){},closeSuggestions(){},addBubble(){},displayQuestion:x=>x});
@@ -763,10 +763,10 @@ assert.deepEqual(matrixToTable.table.columns, ["Product", "Month", "Revenue"], "
  try {
   const running=ui.submit();
   const loading=ui.messages.children[0];
-  ui.setLoadingStage('Waiting for Power BI…'); assert.equal(loading.children[1].children[2].textContent,'Waiting for Power BI…');
-  assert.equal(loading.children[1].children[0].textContent,'Working on your question…');
+  ui.setLoadingStage('Waiting for Power BI…'); assert.equal(loading.children[0].children[1].children[1].textContent,'Waiting for Power BI…');
+  assert.equal(loading.children[0].children[1].children[0].textContent,'Preparing answer…');
   ui.input.value='Next draft';
-  loading.children[2].handlers.click();
+  loading.children[0].children[2].handlers.click();
   await running;
   assert.equal(ui.pendingQuestion,undefined);
   assert.equal(loading.removed,true);

@@ -2,6 +2,7 @@ import { GlobalQnaUi } from '../../src/qna/ui';
 import { GlobalQnaEngine } from '../../src/qna/engine';
 import { formatPowerBiValue } from '../../src/dataAdapter';
 import { settingsSelect } from '../../src/qna/settingsSelect';
+import { analysisBinding } from '../../src/analysisTemplates';
 import { openConnections } from './connections-ui';
 declare const microsoftTeams: any;
 declare global { interface Window { askbicsTeamsReady?: Promise<boolean>; askbicsVisualReady?: boolean } }
@@ -119,6 +120,7 @@ async function mount() {
   ui.automaticGroupingEnabled = () => true;
   ui.measureOptions = () => model.measures.map((m: any) => m.name);
   ui.groupingOptions = () => model.dimensions.map((d: any) => d.name);
+  ui.analysisModelBinding = hierarchy => analysisBinding(model.dimensions,hierarchy);
   ui.valueOptions = () => [...dictionary].flatMap(([detail, values]) => values.map(label => ({ label, detail })));
   const loads = new Map<string, Promise<void>>();
   ui.loadSuggestionValues = async fields => {
@@ -141,6 +143,7 @@ async function mount() {
   };
   ui.cancelQuestion = () => { revision++; controller?.abort(); };
   ui.timeSettings = () => time;
+  ui.analysisDateFields = () => model.dimensions.filter(field => field.type === 'date').map(field => field.name);
   const controls = new Map<string, HTMLSelectElement>();
   let savedTime = { ...time };
   ui.mountTimeSettings = container => {

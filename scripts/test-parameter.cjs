@@ -89,6 +89,31 @@ for (const variant of ['June 2026','Jun 2026','june 26','26 june','2026 jun','06
   assert.deepEqual(plan('Rent Measure by City for '+variant).filters, plan('Rent Measure by City for June 2026').filters, variant);
 }
 assert.equal(normalizeMonthPeriods('Jun 24 vs 26/06'), 'June 2024 vs June 2026');
+const naturalPeriod = plan('Rent Measure by City for June 2024');
+for (const question of [
+  'Rent Measure by City of June 2024',
+  'Rent Measure by City in June 2024',
+  'Rent Measure by City June 2024',
+  'June 2024 Rent Measure by City',
+  'Could you please show me Rent Measure by City of June 2024?',
+  'I want to see Rent Measure by City of June 2024',
+  'Please give me Rent Measure by City during June 2024'
+]) {
+  assert.deepEqual(plan(question), naturalPeriod, question);
+}
+assert.deepEqual(plan('Rent Measure by City of 2024'), plan('Rent Measure by City for 2024'));
+const businessWords = {...config, options:[...config.options,'Type of Lease'],
+  fields:[...config.fields,{name:'Type of Lease',table:'Retail',column:'LeaseType',values:['Food and Beverage','Cost of Sales']}]};
+for (const value of ['Food and Beverage','Cost of Sales']) {
+  const result = planParameterQuestion(`Cost of Sales by Type of Lease of June 2024 where Type of Lease = "${value}"`,businessWords,['Cost of Sales']);
+  assert.deepEqual(result.measures,['Cost of Sales']);
+  assert.deepEqual(result.groups,['Type of Lease']);
+  assert.deepEqual(result.filters[0].values,[value]);
+}
+for (const instruction of ['excluding','before','after','versus','percentage of revenue']) {
+  assert.throws(()=>plan(`Rent Measure by City ${instruction} June 2024`),/Could not safely interpret/,
+    `Unsupported meaningful instruction must not be silently discarded: ${instruction}`);
+}
 assert.throws(()=>normalizeMonthPeriods('06/07'), /Ambiguous period/);
 assert.equal(normalizeMonthPeriods('06/07',{numericOrder:'month-year'}), 'June 2007');
 assert.equal(normalizeMonthPeriods('06/07',{numericOrder:'year-month'}), 'July 2006');
@@ -573,7 +598,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
     let deadlineCallback;
     const nodes = [];
     document.createElement = tag => {
-      const node = {tag,children:[],listeners:{},classList:{add(){}},setAttribute(){},append(...children){this.children.push(...children)},addEventListener(name,fn){this.listeners[name]=fn},remove(){this.removed=true}};
+      const node = {tag,children:[],replaceChildren(...items){this.children=items},listeners:{},classList:{add(){}},setAttribute(){},append(...children){this.children.push(...children)},addEventListener(name,fn){this.listeners[name]=fn},remove(){this.removed=true}};
       nodes.push(node); return node;
     };
     global.setTimeout = (callback, delay) => { if(delay===60000) deadlineCallback=callback; return 123; };
@@ -591,7 +616,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
         assert.equal(ui.loadingStage,undefined);
         assert.equal(failures.length,1);
         assert.match(failures[0],timedOut ? /60 seconds/ : /cancelled/);
-        assert.ok(nodes.filter(node=>node.tag==='div').at(-1).removed);
+        assert.ok(nodes.filter(node=>node.className==='askbics-analysis-loading').at(-1).removed);
         finish({text:'late'}); await flush();
         assert.equal(failures.length,1);
       }

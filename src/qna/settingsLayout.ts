@@ -15,11 +15,13 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     const hasStartup = !!form.querySelector(".askbics-qna__startup-settings");
     const revenue = createSection("Percentage of Revenue", "Divide each amount by revenue for the same period, including YTD and TTM.");
     const reports = createSection("Saved reports", "Organize reports into sections.");
+    const analysis = createSection("Explain & investigate", "Explore changes across available business dimensions in one answer.");
     for (const child of Array.from(form.children)) {
         const target = child.classList.contains("askbics-qna__conversation-settings") ? general
             : child.classList.contains("askbics-qna__autocomplete-settings") ? suggestions
             : child.classList.contains("askbics-qna__synonym-settings") ? synonyms
             : child.classList.contains("askbics-qna__revenue-settings") ? revenue
+            : child.classList.contains("askbics-qna__analysis-settings") ? analysis
             : child.classList.contains("askbics-qna__startup-settings") ? startup
             : child.tagName === "FIELDSET" ? reports : layout;
         target.append(child);
@@ -50,9 +52,21 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     search.oninput = () => synonyms.querySelectorAll<HTMLElement>(".askbics-synonym-disclosure").forEach(row=>{row.hidden = !(row.textContent || "").toLowerCase().includes(search.value.toLowerCase());});
     const entries = [
         {label:"General",page:general}, {label:"Suggestions",page:suggestions}, {label:"Synonyms",page:synonyms},
-        {label:"Table & matrix",page:layout}, {label:"Time intelligence",page:time},
-        {label:"Data setup",page:data}, {label:"Saved reports",page:reports}, {label:"Percentage of Revenue",page:revenue}, ...(hasStartup ? [{label:"Startup loading",page:startup}] : [])
+        {label:"Table & matrix",page:layout}, {label:"Explain & investigate",page:analysis}, {label:"Percentage of Revenue",page:revenue},
+        {label:"Saved reports",page:reports}, {label:"Time intelligence",page:time}, {label:"Data setup",page:data}, ...(hasStartup ? [{label:"Startup loading",page:startup}] : [])
     ];
+    const iconPaths: Record<string,string> = {
+        "General":"M4 7h5m4 0h7M4 17h9m4 0h3M9 4v6m4-6v6M13 14v6m4-6v6",
+        "Suggestions":"M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0c-1 1-1 2-1 4H9c0-2 0-3-1-4Z",
+        "Synonyms":"M3 5h11M8 3v2m-3 3c1 4 4 7 8 9M12 5c0 5-4 10-9 12m11 3 4-11 4 11m-6-4h4",
+        "Table & matrix":"M4 4h16v16H4ZM4 10h16M10 4v16",
+        "Explain & investigate":"M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-2 6 5 5M7 13v-3m4 3V7m4 6V9",
+        "Percentage of Revenue":"M5 19 19 5M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm12 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+        "Saved reports":"M6 3h12v18l-6-4-6 4Z",
+        "Time intelligence":"M4 5h16v16H4ZM8 3v4m8-4v4M4 11h16m-12 4h2m4 0h2",
+        "Data setup":"M20 6c0 2-4 3-8 3S4 8 4 6s4-3 8-3 8 1 8 3ZM4 6v12c0 2 4 3 8 3s8-1 8-3V6M4 12c0 2 4 3 8 3s8-1 8-3",
+        "Startup loading":"M12 3v9m-6-7a9 9 0 1 0 12 0"
+    };
     time.classList.add("askbics-settings-page"); data.classList.add("askbics-settings-page");
     const timePanel = time.querySelector<HTMLElement>(".askbics-time-setup");
     if (timePanel && !timePanel.querySelector(".askbics-settings-date-options")) {
@@ -82,12 +96,16 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
         data.querySelectorAll<HTMLElement>(".askbics-parameter-trial > details").forEach(details=>{details.hidden=false;});
     };
     entries.forEach((entry,index)=>{
-        const button=document.createElement("button"); button.type="button"; button.textContent=entry.label; button.onclick=()=>select(index); buttons.push(button); navigation.append(button);
+        const button=document.createElement("button"); button.type="button";
+        const icon=document.createElementNS("http://www.w3.org/2000/svg","svg");icon.setAttribute("viewBox","0 0 24 24");icon.setAttribute("aria-hidden","true");icon.setAttribute("focusable","false");icon.classList.add("askbics-settings-nav-icon");
+        const path=document.createElementNS("http://www.w3.org/2000/svg","path");path.setAttribute("d",iconPaths[entry.label]);icon.append(path);
+        const label=document.createElement("span");label.textContent=entry.label;button.append(icon,label);
+        button.onclick=()=>select(index); buttons.push(button); navigation.append(button);
         const option=document.createElement("option"); option.value=String(index); option.textContent=entry.label; compact.append(option);
     });
     compact.onchange=()=>select(Number(compact.value)); navigation.prepend(compact);
     refreshCompact=settingsSelect(compact,false);
     compact.nextElementSibling?.classList.add("askbics-settings-section-control");
-    body.append(general,suggestions,synonyms,layout,time,data,reports,revenue,...(hasStartup ? [startup] : [])); select(0);
+    body.append(general,suggestions,synonyms,layout,analysis,time,data,reports,revenue,...(hasStartup ? [startup] : [])); select(0);
     return section=>{ const page = section === "startup" && hasStartup ? startup : section === "revenue" ? revenue : section === true ? data : section === "time" ? time : general; select(entries.findIndex(entry => entry.page === page)); };
 }

@@ -28,7 +28,7 @@ export class ModelSession {
     }
     const setup = time || this.model.time || { yearField: fields.find(f => f.table === this.model.year?.table && f.column === this.model.year.column)?.name };
     // Every target is still resolved from the server allowlist by the original parser/compiler.
-    return { revenue: settings.revenue, table: 'Teams', column: 'Grouping', enabled: true, options: fields.map(d => d.name), fields, groupAliases: aliases,
+    return { analysis: settings.analysis, revenue: settings.revenue, table: 'Teams', column: 'Grouping', enabled: true, options: fields.map(d => d.name), fields, groupAliases: aliases,
       defaultMeasure: this.model.measures.some(m => m.name === settings.defaultMeasure) ? settings.defaultMeasure : undefined,
       additiveMeasures: (settings.additiveMeasures || []).filter(n => this.model.measures.some(m => m.name === n)), time: setup };
   }

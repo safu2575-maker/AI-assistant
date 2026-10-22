@@ -5,6 +5,7 @@ import less from 'less';
 const reference = await readFile('../src/fieldParameterTrial.ts', 'utf8');
 const method = (start, end) => { const a = reference.indexOf(start), b = reference.indexOf(end, a + start.length); if (a < 0 || b < 0) throw new Error('Shared query adapter boundary changed: update build-visual.mjs before releasing either host.'); return reference.slice(a, b); };
 const imports = `import { revenueQuestion, revenueRequest } from './revenue';
+import { planAnalysis, runAnalysis } from './analysisTemplates';
 import type powerbi from 'powerbi-visuals-api';
 import type { IFilter, IFilterColumnTarget } from 'powerbi-models';
 import { indexGroupRows } from './queryPerformance';

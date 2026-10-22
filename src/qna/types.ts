@@ -27,6 +27,10 @@ export interface QnaContext {
 
 export type ModelSelection = Array<{ table: string; column?: string; hierarchy?: string; hierarchyLevel?: string; dateDay?: boolean; value: string | number | boolean }>;
 export interface QnaTable {
+    sourceColumnIndices?: number[];
+    analysisGroupCount?: number;
+    analysisResult?: boolean;
+    modelEvaluatedTotals?: boolean[];
     revenueColumns?: Array<{ source: string; column: string }>;
     columnQuestions?: Record<string, { question: string; measure: string }>;
     modelPeriods?: Array<{ sourceColumn: number; period: string; question: string; measure: string; groupCount: number }>;
@@ -53,6 +57,7 @@ export interface QnaTable {
 }
 
 export interface QnaLayoutSettings {
+    analysis?: import("../analysisTemplates").AnalysisSettings;
     conversationMode: "history" | "latest";
     cardinalityFallbackEnabled: boolean;
     cardinalityMatrixThresholdPct: number;
@@ -89,6 +94,7 @@ export interface QnaChart {
 }
 
 export interface QnaResponse {
+    analysis?: import("../analysisTemplates").AnalysisAnswer;
     modelQuery?: boolean;
     text: string;
     kpi?: { title: string; value: string; subtitle?: string };

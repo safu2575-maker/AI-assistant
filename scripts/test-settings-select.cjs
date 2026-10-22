@@ -3,11 +3,12 @@ const { settingsSelect } = require('../.tmp/test/qna/settingsSelect');
 const previousDocument = global.document;
 function element() {
   return {
-    children: [], attrs: {}, handlers: {}, value: '',
+    children: [], attrs: {}, handlers: {}, dataset: {}, value: '',
     append(...children) { this.children.push(...children); },
     replaceChildren() { this.children = []; },
     setAttribute(key,value) { this.attrs[key] = value; },
     getAttribute(key) { return this.attrs[key]; },
+    removeAttribute(key) { delete this.attrs[key]; },
     addEventListener(key,handler) { this.handlers[key] = handler; },
     contains(node) { return node === this || this.children.some(child => child.contains?.(node)); },
     focus() { global.document.activeElement = this; }

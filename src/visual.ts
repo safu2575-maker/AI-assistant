@@ -88,6 +88,7 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         this.ui.mountDataSettings = container => this.parameterTrial.mountSettings(container);
         this.ui.mountTimeSettings = container => this.parameterTrial.mountTimeSettings(container);
         this.ui.timeSettings = () => this.parameterTrial.readTimeSetup();
+        this.ui.analysisDateFields = this.parameterTrial.analysisDateFields;
         this.ui.saveDataSettings = () => this.parameterTrial.saveSettings();
         this.ui.cancelDataSettings = () => this.parameterTrial.cancelSettings();
         this.ui.measureOptions = () => this.parameterTrial.measureOptions();
@@ -95,6 +96,8 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         this.parameterTrial.startup = () => this.engine.getLayoutSettings().startup;
         this.ui.onStartupChanged = () => this.parameterTrial.applyStartup();
         this.parameterTrial.revenue = () => this.engine.getLayoutSettings().revenue;
+        this.parameterTrial.analysis = () => this.engine.getLayoutSettings().analysis;
+        this.ui.analysisModelBinding = hierarchy => this.parameterTrial.analysisModelBinding(hierarchy);
         this.parameterTrial.additiveMeasures = () => this.engine.getLayoutSettings().additiveMeasures || [];
         this.ui.groupingOptions = () => this.parameterTrial.groupingOptions();
         this.ui.valueOptions = () => this.parameterTrial.valueOptions();

@@ -1,4 +1,5 @@
 import { revenueQuestion, revenueRequest } from './revenue';
+import { analysisBinding, planAnalysis, runAnalysis } from "./analysisTemplates";
 import { visualBuild } from "./buildInfo";
 import { indexGroupRows, collectTextValues } from "./queryPerformance";
 import { monthlyPeriod } from "./monthlyPeriods";
@@ -190,6 +191,8 @@ export class FieldParameterTrial {
     public defaultMeasure?: () => string | undefined;
     public additiveMeasures?: () => string[];
     public revenue?: () => ParameterConfig["revenue"];
+    public analysis?: () => ParameterConfig["analysis"];
+    public analysisModelBinding = (hierarchy: string[]): string => analysisBinding(this.readConfig().fields, hierarchy);
     public preferMatrix?: (cardinalities: number[]) => boolean;
 
     constructor(element: HTMLElement, private host: powerbi.extensibility.visual.IVisualHost) {
@@ -307,6 +310,7 @@ export class FieldParameterTrial {
     public readTimeSetup(): TimeSetup {
         return { ...Object.fromEntries(Object.entries(this.timeSelectors).filter(([, select]) => !!select.value).map(([key, select]) => [key, select.value])), numericOrder: this.timeOrder.value as TimeSetup["numericOrder"], monthIndexBase: 1, twoDigitYearStart: Number(this.timeYearStart.value) };
     }
+    public analysisDateFields = (): string[] => this.readConfig().fields.filter(field => field.type === "date").map(field => field.name);
 
     private persistConfig(): void {
         if (this.settingsSnapshot) return;
@@ -355,7 +359,7 @@ export class FieldParameterTrial {
             ? { table: this.measureTable.value.trim(), column: this.measureColumn.value.trim(), options: this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) } : undefined;
         const time = this.readTimeSetup();
         const hasTimeSetup = Object.values(this.timeSelectors).some(select => !!select.value) || time.numericOrder !== "auto" || time.monthIndexBase !== 1 || time.twoDigitYearStart !== 2000;
-const complete = { ...config, directMeasures: this.directMeasures, revenue: this.revenue?.(), ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
+const complete = { ...config, directMeasures: this.directMeasures, analysis: this.analysis?.(), revenue: this.revenue?.(), ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
         validateParameterConfig(complete); return complete;
     }
 
@@ -445,6 +449,13 @@ const complete = { ...config, directMeasures: this.directMeasures, revenue: this
         this.cancel();
         let config = this.readConfig();
         config.groupAliases = this.groupAliases?.();
+        const analysis = planAnalysis(question, config, this.measures);
+        if (analysis) return runAnalysis(analysis, config, this.measures, async plan => {
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            const answer = await this.request(plan, config, refresh);
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            return answer;
+        });
         const revenue = revenueQuestion(question);
         if (revenue.enabled) {
             if (!config.revenue?.field || !config.revenue.value?.trim()) throw new Error('Configure Settings > Percentage of Revenue before asking this question.');
@@ -707,7 +718,8 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const values = raw.map((value, index) => value === null ? "—" : formatPowerBiValue(value, formats[index]));
         return {text: response.text, modelQuery: true, table: {
             columns: plan.measures, rows: [values], rowIndices: [[]], modelRawRows: [raw],
-            modelTotals: values, modelRawTotals: raw, modelFormats: formats
+            modelTotals: values, modelRawTotals: raw, modelFormats: formats,
+            modelEvaluatedTotals: plan.measures.map(measure => fixedRow !== undefined || !!table.modelEvaluatedTotals?.[table.columns.indexOf(measure)])
         }};
     }
 
@@ -1002,6 +1014,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const result: QnaResponse = { text, modelQuery: true, table: { columns: names, rows, rowIndices: rows.map(() => []) } };
         result.table!.modelRawRows = (table.rows || []).map(row=>indices.map(index=>typeof row[index] === "number" ? Number(row[index]) : null));
         result.table!.modelRawTotals = table.totals ? indices.map(index=>typeof table.totals![index] === "number" ? Number(table.totals![index]) : null) : undefined;
+        result.table!.modelEvaluatedTotals = indices.map(index => typeof table.totals?.[index] === "number");
         result.table!.modelFormats = indices.map(index=>table.columns[index].format);
         result.table!.modelEditor = { rows: plan.groups, columns: [], measures: plan.measures, filters: plan.filters.flatMap(filter => {
             const basic = filter as IFilter & { values?: Array<string | number | boolean> };

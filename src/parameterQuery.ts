@@ -12,6 +12,7 @@ export interface ModelField {
     values?: string[];
 }
 export interface ParameterConfig {
+    analysis?: import("./analysisTemplates").AnalysisSettings;
     table: string;
     column: string;
     options: string[];
@@ -193,7 +194,10 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
         if (year < 1900 || year > 9998) throw new Error("Choose a year between 1900 and 9998.");
         end = new Date(Date.UTC(year, index + 1, 1));
         start = new Date(Date.UTC(year, period && /ttm|trailing/i.test(period[0]) ? index - 11 : period ? 0 : index, 1));
-        text = text.replace(month[0], " ");
+        // Consume "of" only when it directly introduces a recognized period.
+        // Do not globally erase it from business names or calculation phrases.
+        const beforeMonth = text.slice(0, month.index).replace(/\bof\s*$/i, " ");
+        text = beforeMonth + " " + text.slice(month.index + month[0].length);
         if (indexField) {
             plan.filters.push(new BasicFilter({ table: indexField.table, column: indexField.column }, "In", monthIndexValues(start, end, config.time?.monthIndexBase)).toJSON());
             plan.summary.push(`${period ? period[0].toUpperCase() + " ending " : "Month: "}${monthNames[index]} ${year}`);
@@ -216,7 +220,7 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
             }
         }
     } else {
-        const year = /\b(?:for|in|during)\s+(\d{4})\b/i.exec(text);
+        const year = /\b(?:for|in|during|of)\s+(\d{4})\b/i.exec(text);
         if (period) throw new Error("YTD and TTM need an end month, for example TTM ending June 2025.");
         if (year) {
             const number = Number(year[1]);
