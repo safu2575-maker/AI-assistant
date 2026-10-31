@@ -1,3 +1,9 @@
+import { wideCategoryFields, COLUMN_LAYOUT_NOTICE } from "../columnLayout";
+import { alwaysFilterRules } from "../alwaysFilter";
+import { evaluateFormula } from "./formula";
+import { expandAnswerGroups } from "../answerGroups";
+import { compileKpis, kpiFormat } from "../customKpis";
+import { resolveValueSynonyms } from "../valueSynonyms";
 import { QnaAggregation, QnaAutocompleteItem, QnaChartType, QnaContext, QnaField, QnaLayoutSettings, QnaMeasure, QnaResponse } from "./types";
 
 const clean = (value: unknown): string => String(value ?? "").replace(/\s+/g, " ").trim();
@@ -20,7 +26,7 @@ export class GlobalQnaEngine {
         if (response.chart) response.chart.backgroundFields = backgroundFields;
         return response;
     }
-    private layoutSettings: QnaLayoutSettings = { conversationMode: "latest", cardinalityFallbackEnabled: true, cardinalityMatrixThresholdPct: 25, cardinalityMaxColumnValues: 5, cardinalityLowToHighHierarchy: true };
+    private layoutSettings: QnaLayoutSettings = { conversationMode: "latest", cardinalityFallbackEnabled: true, cardinalityMatrixThresholdPct: 25, cardinalityMaxColumnValues: 12, cardinalityLowToHighHierarchy: true };
     private dashboardDateRange: { start: number; end: number } | null = null;
     private termCandidates: Array<{ label: string; lower: string; kind: "measure" | "field" | "value" }> | null = null;
     private autocompleteItems = new Map<string, QnaAutocompleteItem[]>();
@@ -194,7 +200,11 @@ export class GlobalQnaEngine {
         return matches.sort((a, b) => a.start - b.start);
     }
 
-    private invalidateCaches(): void { this.termCandidates = null; this.autocompleteItems.clear(); this.cachedDateValues = null; this.responseCache.clear(); }
+    private syncCustomKpis(): void {
+        const native=this.context.measures.filter(m=>!m.key.startsWith("askbics-custom:"));
+        this.context={...this.context,measures:[...native,...(this.layoutSettings.customKpis||[]).filter(k=>k.enabled).map(k=>({key:"askbics-custom:"+k.id,name:k.name,values:[] as Array<number|null>,formatHint:k.format==='percentage'?'percentage' as const:'number' as const,formatString:kpiFormat(k)}))]};
+    }
+    private invalidateCaches(): void { this.syncCustomKpis(); this.termCandidates = null; this.autocompleteItems.clear(); this.cachedDateValues = null; this.responseCache.clear(); }
     private configuredAliases(name: string): string[] { if (this.layoutSettings.synonymEnabled?.[name] === false) return []; return (this.layoutSettings.synonyms?.[name] || []).map(norm).filter(Boolean); }
 
     private applyQuestionSynonyms(response: QnaResponse, question: string): QnaResponse {
@@ -214,10 +224,16 @@ export class GlobalQnaEngine {
         return { ...response, text: replace(response.text), table, chart, kpi: response.kpi ? { ...response.kpi, title: replace(response.kpi.title) } : undefined };
     }
 
+    private activeGroupFilters: Array<{field:string;values:string[]}> = [];
     answer(question: string): QnaResponse {
+        question = expandAnswerGroups(question, this.layoutSettings.answerGroups);
+        question = resolveValueSynonyms(question, this.layoutSettings.valueSynonyms, this.context.fields.map(f=>({name:f.name,values:f.values,aliases:this.configuredAliases(f.name)})), this.context.measures.map(m=>m.name));
         const range = this.dashboardDateRange; const cacheKey = `${range?.start || 0}:${range?.end || 0}:${question}`; const cached = this.responseCache.get(cacheKey); if (cached) return cached;
         this.answerFilterFields = new Set<string>();
-        const response = this.applyQuestionSynonyms(this.attachAnswerContext(this.computeAnswer(question)), question); this.responseCache.set(cacheKey, response); if (this.responseCache.size > 100) this.responseCache.delete(this.responseCache.keys().next().value!); return response;
+        const encoded=/;\s*answerFilters:\s*(\S+)/i.exec(question);
+        this.activeGroupFilters=encoded?JSON.parse(decodeURIComponent(encoded[1])).filter((rule:{group?:boolean})=>rule.group):[];
+        try { const response = this.applyQuestionSynonyms(this.attachAnswerContext(this.computeAnswer(question)), question); this.responseCache.set(cacheKey, response); if (this.responseCache.size > 100) this.responseCache.delete(this.responseCache.keys().next().value!); return response; }
+        finally { this.activeGroupFilters=[]; }
     }
 
     private computeAnswer(question: string): QnaResponse {
@@ -383,6 +399,7 @@ export class GlobalQnaEngine {
             try {
                 const filters = JSON.parse(decodeURIComponent(encoded));
                 if (Array.isArray(filters)) for (const filter of filters) {
+                    if (filter.group) continue;
                     const field = this.context.fields.find((item) => item.name === filter.field);
                     if (field && Array.isArray(filter.values)) for (const label of filter.values) {
                         if (typeof label !== "string") continue;
@@ -469,7 +486,7 @@ export class GlobalQnaEngine {
     }
 
     private dateValues(): Array<{ index: number; time: number }> { if (this.cachedDateValues) return this.cachedDateValues; const field = this.context.fields.find((item) => /(^|\s)date($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)month($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)year($|\s)/i.test(item.name)); if (!field) return this.cachedDateValues = []; const values: Array<{ index: number; time: number }> = []; for (let index = 0; index < field.values.length; index++) { const text = String(field.values[index] || "").trim(); const normalized = /^\d{4}-\d{2}$/.test(text) ? `${text}-01` : /^\d{4}$/.test(text) ? `${text}-01-01` : text; const time = new Date(normalized).getTime(); if (Number.isFinite(time)) values.push({ index, time }); } return this.cachedDateValues = values; }
-    private baseIndices(): number[] { const selected = this.context.selectedIndices.length ? this.context.selectedIndices : this.allIndices; if (!this.dashboardDateRange) return selected; const dateField = this.context.fields.find((item) => /(^|\s)date($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)month($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)year($|\s)/i.test(item.name)); if (dateField) this.answerFilterFields.add(dateField.name); const range = this.dashboardDateRange; const allowed = new Set<number>(); for (const item of this.dateValues()) if (item.time >= range.start && item.time <= range.end) allowed.add(item.index); return selected.filter((index) => allowed.has(index)); }
+    private baseIndices(): number[] { let selected = this.context.selectedIndices.length ? this.context.selectedIndices : this.allIndices; for(const rule of this.activeGroupFilters){const field=this.context.fields.find(f=>f.name===rule.field);if(!field)throw new Error('Group filter field is unavailable: '+rule.field);selected=selected.filter(index=>rule.values.includes(field.values[index]));} for (const rule of alwaysFilterRules(this.layoutSettings.alwaysFilter)) { const field = this.context.fields.find(f => f.name === rule.field); if (!field || !rule.values?.length) throw new Error("Always filter field is unavailable. Use model queries or review Data setup."); selected = selected.filter(index => rule.values.includes(field.values[index])); } if (!this.dashboardDateRange) return selected; const dateField = this.context.fields.find((item) => /(^|\s)date($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)month($|\s)/i.test(item.name)) || this.context.fields.find((item) => /(^|\s)year($|\s)/i.test(item.name)); if (dateField) this.answerFilterFields.add(dateField.name); const range = this.dashboardDateRange; const allowed = new Set<number>(); for (const item of this.dateValues()) if (item.time >= range.start && item.time <= range.end) allowed.add(item.index); return selected.filter((index) => allowed.has(index)); }
 
     private scopeIndices(values: Array<{ field: QnaField; indices: number[] }>, groupedField?: QnaField): number[] {
         const base = this.baseIndices();
@@ -593,6 +610,13 @@ export class GlobalQnaEngine {
     private shouldUseMatrix(fields: QnaField[], scope: number[]): boolean { if (!this.layoutSettings.cardinalityFallbackEnabled || fields.length < 2) return false; const allowed = new Set(scope); const counts = fields.map((field) => this.fieldCardinality(field, allowed)).filter(Boolean); if (counts.length < 2) return false; const highest = Math.max(...counts); const threshold = highest * Math.max(1, Math.min(100, this.layoutSettings.cardinalityMatrixThresholdPct)) / 100; return counts.some((count) => count < highest && count <= threshold); }
 
     private hierarchyMatrix(rowFields: QnaField[], columnFields: QnaField[], measures: QnaMeasure[], aggregation: QnaAggregation, scope: number[], contextLabel = ""): QnaResponse {
+        const move=wideCategoryFields(columnFields.map(field=>field.name),scope.map(i=>columnFields.map(field=>field.values[i])));
+        if(move.length){
+            const result=this.hierarchyMatrix([...rowFields,...move.map(i=>columnFields[i])],columnFields.filter((_,i)=>!move.includes(i)),measures,aggregation,scope,contextLabel);
+            result.text+=' '+COLUMN_LAYOUT_NOTICE;
+            if(result.table)result.table.columnLayoutNotice=COLUMN_LAYOUT_NOTICE;
+            return result;
+        }
         const oneToOneHierarchy = rowFields.length > 1 && rowFields.slice(0, -1).every((_, level) => {
             const children = new Map<string, Set<string>>();
             for (const index of scope) {
@@ -605,14 +629,15 @@ export class GlobalQnaEngine {
             const flat = this.groupedByFields(rowFields, measures, aggregation, scope);
             return { ...flat, text: `${measures.map((measure) => measure.name).join(" vs ")} matrix by ${rowFields.map((field) => field.name).join(" > ")}.` };
         }
-        const maxColumns = Math.max(0, this.layoutSettings.cardinalityMaxColumnValues); const temporalColumns = columnFields.some((field) => /\b(?:year|quarter|month|week|date|day)\b/i.test(field.name)); const columnLimit = temporalColumns ? Math.max(12, maxColumns) : maxColumns; const columnMap = new Map<string, { labels: string[]; label: string; indices: number[] }>(); if (columnFields.length) scope.forEach((index) => { const labels = columnFields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels); const group = columnMap.get(key) || { labels, label: labels.join(" > "), indices: [] }; group.indices.push(index); columnMap.set(key, group); }); const columnGroups = Array.from(columnMap.values()).sort((a, b) => { for (let index = 0; index < columnFields.length; index++) { const result = this.compareFieldLabels(columnFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; }).slice(0, columnLimit || undefined);
+        const columnMap = new Map<string, { labels: string[]; label: string; indices: number[] }>(); if (columnFields.length) scope.forEach((index) => { const labels = columnFields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels); const group = columnMap.get(key) || { labels, label: labels.join(" > "), indices: [] }; group.indices.push(index); columnMap.set(key, group); }); const columnGroups = Array.from(columnMap.values()).sort((a, b) => { for (let index = 0; index < columnFields.length; index++) { const result = this.compareFieldLabels(columnFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; });
         type Group = { key: string; label: string; indices: number[]; level: number; parentKey?: string; hasChildren: boolean }; const groups: Group[] = []; const walk = (indices: number[], level: number, parentKey?: string) => { const field = rowFields[level]; if (!field) return; const indexSet = new Set(indices); field.uniqueValues.map((item) => ({ label: item.label, indices: item.indices.filter((index) => indexSet.has(index)) })).filter((item) => item.indices.length).sort((a, b) => this.compareFieldLabels(field, a.label, b.label)).forEach((item) => { const key = `${parentKey || "root"}>${level}:${item.label}`; const hasChildren = level < rowFields.length - 1; groups.push({ key, label: item.label, indices: item.indices, level, parentKey, hasChildren }); if (hasChildren) walk(item.indices, level + 1, key); }); }; walk(scope, 0);
         const matrixTotalColumns = columnGroups.length ? measures.map((measure) => measures.length === 1 ? "Total" : `${measure.name} Total`) : []; const valueColumns = columnGroups.length ? [...columnGroups.flatMap((column) => measures.map((measure) => measures.length === 1 ? column.label : `${column.label} · ${measure.name}`)), ...matrixTotalColumns] : measures.map((measure) => contextLabel ? `${measure.name} · ${contextLabel}` : measure.name); const intersections = groups.map((group) => { const groupSet = new Set(group.indices); return columnGroups.map((column) => column.indices.filter((index) => groupSet.has(index))); }); const rows = groups.map((group, groupIndex) => { const values = columnGroups.length ? [...columnGroups.flatMap((_, columnIndex) => measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, intersections[groupIndex][columnIndex], aggregation), aggregation))), ...measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, group.indices, aggregation), aggregation))] : measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, group.indices, aggregation), aggregation)); return [group.label, ...values]; });
         const totalValues = columnGroups.length ? [...columnGroups.flatMap((column) => measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, column.indices, aggregation), aggregation))), ...measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, scope, aggregation), aggregation))] : measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, scope, aggregation), aggregation)); rows.push(["Grand Total", ...totalValues]); const rowIndices = [...groups.map((group) => group.indices), scope]; const cellIndices = groups.map((group, groupIndex) => [group.indices, ...(columnGroups.length ? [...intersections[groupIndex].flatMap((indices) => measures.map(() => indices)), ...measures.map(() => group.indices)] : measures.map(() => group.indices))]); cellIndices.push([scope, ...(columnGroups.length ? [...columnGroups.flatMap((column) => measures.map(() => column.indices)), ...measures.map(() => scope)] : measures.map(() => scope))]); const rowSelectionFields = rowFields.map((field) => field.name); const selectionFieldsByColumn = [rowSelectionFields, ...(columnGroups.length ? [...columnGroups.flatMap(() => measures.map(() => [...rowSelectionFields, ...columnFields.map((field) => field.name)])), ...measures.map(() => rowSelectionFields)] : measures.map(() => rowSelectionFields))]; const columnTitle = columnFields.length ? ` with columns ${columnFields.map((field) => field.name).join(" > ")}` : ""; const contextTitle = contextLabel ? ` for ${contextLabel}` : ""; const title = `${measures.map((measure) => measure.name).join(" vs ")} matrix by ${rowFields.map((field) => field.name).join(" > ")}${columnTitle}${contextTitle}`; return { text: `${title}.`, table: { columns: [rowFields.map((field) => field.name).join(" > "), ...valueColumns], rows, rowIndices, cellIndices, selectionFieldsByColumn, matrix: { levels: [...groups.map((group) => group.level), 0], keys: [...groups.map((group) => group.key), "grand-total"], parentKeys: [...groups.map((group) => group.parentKey), undefined], hasChildren: [...groups.map((group) => group.hasChildren), false], rowHeader: rowFields.map((field) => field.name).join(" > "), levelNames: rowFields.map((field) => field.name) } } };
     }
 
     private matrixByFields(rowFields: QnaField[], columnField: QnaField, measures: QnaMeasure[], aggregation: QnaAggregation, scope: number[]): QnaResponse {
-        const allowed = new Set(scope); const columnGroups = columnField.uniqueValues.map((item) => ({ ...item, indices: item.indices.filter((index) => allowed.has(index)) })).filter((item) => item.indices.length).slice(0, 12);
+        if(wideCategoryFields([columnField.name],scope.map(i=>[columnField.values[i]])).length)return this.hierarchyMatrix(rowFields,[columnField],measures,aggregation,scope);
+        const allowed = new Set(scope); const columnGroups = columnField.uniqueValues.map((item) => ({ ...item, indices: item.indices.filter((index) => allowed.has(index)) })).filter((item) => item.indices.length);
         const rows = new Map<string, { labels: string[]; indices: number[] }>(); scope.forEach((index) => { const labels = rowFields.map((field) => field.values[index] || "(Blank)"); const key = JSON.stringify(labels); const row = rows.get(key) || { labels, indices: [] }; row.indices.push(index); rows.set(key, row); }); const matrixRows = Array.from(rows.values()).sort((a, b) => { for (let index = 0; index < rowFields.length; index++) { const result = this.compareFieldLabels(rowFields[index], a.labels[index], b.labels[index]); if (result) return result; } return 0; }).map((row) => { const rowSet = new Set(row.indices); return { ...row, intersections: columnGroups.map((column) => column.indices.filter((index) => rowSet.has(index))) }; });
         const columns = [...rowFields.map((field) => field.name), ...columnGroups.flatMap((column) => measures.map((measure) => measures.length === 1 ? column.label : `${column.label} · ${measure.name}`)), "Total"];
         const tableRows = matrixRows.map((row) => { const cells = row.intersections.flatMap((indices) => measures.map((measure) => this.formatAggregate(measure, this.aggregate(measure, indices, aggregation), aggregation))); const total = this.formatAggregate(measures[0], this.aggregate(measures[0], row.indices, aggregation), aggregation); return [...row.labels, ...cells, total]; });
@@ -621,6 +646,19 @@ export class GlobalQnaEngine {
     }
 
     private aggregate(measure: QnaMeasure, indices: number[], aggregation: QnaAggregation): number {
+        if(measure.key.startsWith("askbics-custom:")){
+            const native=this.context.measures.filter(m=>!m.key.startsWith("askbics-custom:"));const compiled=compileKpis(this.layoutSettings.customKpis,native.map(m=>m.name));
+            if(aggregation!=="sum")throw new Error("Custom KPIs calculate from source measures; use the KPI name without an aggregation override.");
+            const evaluate=(name:string,scope:number[]):number|null=>{
+                const kpi=compiled.byName.get(name);
+                if(!kpi){const source=native.find(m=>m.name===name)!;if(scope.length===this.context.rowCount&&source.modelTotal!==undefined)return source.modelTotal;if(!this.layoutSettings.additiveMeasures?.includes(name))throw new Error("Custom KPI requires model-backed totals or an explicitly additive source measure: "+name);return scope.some(i=>source.values[i]!==null)?this.aggregate(source,scope,"sum"):null;}
+                let filtered=scope;
+                for(const rule of kpi.filters||[]){const field=this.context.fields.find(f=>f.name===rule.field);if(!field)throw new Error('KPI filter field is unavailable: '+rule.field);filtered=filtered.filter(index=>rule.values.includes(field.values[index]));}
+                const values=new Map(compiled.dependencies.get(name)!.map(dep=>[dep,evaluate(dep,filtered)]));
+                try{return evaluateFormula(kpi.formula,values,false,null);}catch{return null;}
+            };
+            return evaluate(measure.name,indices)??NaN;
+        }
         if (aggregation === "sum" && measure.modelTotal !== undefined && indices.length === this.context.rowCount && indices.every((value, index) => value === index)) return measure.modelTotal;
         let count = 0; let sum = 0; let min = Infinity; let max = -Infinity;
         const distinct = aggregation === "distinctCount" ? new Set<number>() : undefined;
@@ -699,6 +737,7 @@ export class GlobalQnaEngine {
     }
 
     private formatAggregate(measure: QnaMeasure, value: number, aggregation: QnaAggregation): string {
+        if(measure.key.startsWith("askbics-custom:")){if(!Number.isFinite(value))return "—";const k=this.layoutSettings.customKpis!.find(k=>k.name===measure.name)!;return (k.format==='percentage'?value*100:value).toLocaleString(undefined,{minimumFractionDigits:k.decimals,maximumFractionDigits:k.decimals})+(k.format==='percentage'?'%':'');}
         return aggregation === "count" || aggregation === "distinctCount" ? Math.round(value).toLocaleString() : this.context.formatValue(measure, value);
     }
 }

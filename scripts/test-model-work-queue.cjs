@@ -1,0 +1,27 @@
+const assert = require('node:assert/strict');
+const { ModelWorkQueue } = require('../.tmp/test/modelWorkQueue');
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
+(async () => {
+    const queue = new ModelWorkQueue();
+    const gate = deferred();
+    const events = [];
+    const first = queue.run(true, async () => { events.push('first'); await gate.promise; });
+    const stale = queue.run(true, async () => { events.push('stale'); }).catch(e => e.message);
+    await Promise.resolve(); await Promise.resolve();
+    assert.deepEqual(events, ['first']);
+    const foregroundGate = deferred();
+    const foreground = queue.run(false, async () => { events.push('foreground'); await foregroundGate.promise; });
+    assert.deepEqual(events, ['first', 'foreground']);
+    const fresh = queue.run(true, async () => { events.push('fresh'); });
+    gate.resolve(); await first;
+    assert.equal(await stale, 'Query cancelled.');
+    assert(!events.includes('fresh'));
+    foregroundGate.resolve(); await foreground; await fresh;
+    assert.deepEqual(events, ['first', 'foreground', 'fresh']);
+    const cancelled = queue.run(true, async () => { throw new Error('must not run'); }).catch(e => e.message);
+    queue.invalidate();
+    assert.equal(await cancelled, 'Query cancelled.');
+    await assert.rejects(queue.run(true, async () => { throw new Error('model error'); }), /model error/);
+    assert.equal(await queue.run(true, async () => 42), 42);
+    console.log('Model work queue: serial summaries, foreground priority, cancellation and recovery passed.');
+})().catch(error => { console.error(error); process.exitCode = 1; });

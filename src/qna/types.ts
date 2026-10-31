@@ -27,6 +27,28 @@ export interface QnaContext {
 
 export type ModelSelection = Array<{ table: string; column?: string; hierarchy?: string; hierarchyLevel?: string; dateDay?: boolean; value: string | number | boolean }>;
 export interface QnaTable {
+    traceHighlightRows?: number[];
+    /** View-only extension: callbacks are never persisted as model data. */
+    detailAction?: {column:number; open:(row:number,anchor:HTMLElement)=>void};
+    filteredTotals?: (sourceRows:number[])=>string[];
+    totalRowIndices?: number[];
+    columnLayoutNotice?: string;
+    summaryAdditiveMeasures?: string[];
+    agingView?: {name:string;group:string;date:string;display:"detailed"|"summary"};
+    agingScopes?: Record<string, import("../answerTransactions").TransactionScope>;
+    summaryCards?: import("./summaryCardSettings").SummaryCards;
+    document?: import("../clearingDetails").ClearingSettings;
+    documentLink?: (row:number,column:number,anchor:HTMLElement)=>void;
+    clearing?: import("../clearingDetails").ClearingSettings;
+    clearingLink?: (row:number,column:number,anchor:HTMLElement)=>void;
+    groupSubtotal?: (column:number)=>void;
+    modelGroupValues?: Array<Array<string | number | boolean | null>>;
+    modelResultComplete?: boolean;
+    transactionExcludedRows?: number[];
+    transactionReviewRows?: Record<number,string>;
+    transactionDetail?: boolean;
+    drillScopes?: import("../answerTransactions").TransactionScope[];
+    duplicateRows?: number[];
     sourceColumnIndices?: number[];
     analysisGroupCount?: number;
     analysisResult?: boolean;
@@ -57,12 +79,20 @@ export interface QnaTable {
 }
 
 export interface QnaLayoutSettings {
+    cashFlow?: import("../cashFlow").CashSetup;
+    waterfall?: import("./waterfallWorkspace").WaterfallDefaults;
+    answerGroups?: import("../answerGroups").AnswerGroup[];
+    customKpis?: import("../customKpis").CustomKpi[];
+    aging?: import("../aging").AgingSetup[];
+    valueSynonyms?: import("../valueSynonyms").ValueSynonym[];
+    alwaysFilter?: import("../alwaysFilter").AlwaysFilter;
     analysis?: import("../analysisTemplates").AnalysisSettings;
     conversationMode: "history" | "latest";
     cardinalityFallbackEnabled: boolean;
     cardinalityMatrixThresholdPct: number;
     cardinalityMaxColumnValues: number;
     cardinalityLowToHighHierarchy: boolean;
+    summarizeHiddenFields?: string[];
     autocompleteFields?: string[];
     autocompleteMeasures?: string[];
     defaultMeasure?: string;
@@ -74,6 +104,9 @@ export interface QnaLayoutSettings {
 }
 
 export interface QnaChart {
+    waterfallSort?: 'financial' | 'positive';
+    waterfallRows?: import("./waterfall").WaterfallRow[];
+    waterfall?: {totals:boolean[];modes:Array<'loaded'|'running'>;originalValues?:number[]};
     groupNames?: string[];
     groupValues?: string[][];
     subtitle?: string;
@@ -94,6 +127,9 @@ export interface QnaChart {
 }
 
 export interface QnaResponse {
+    transactionRule?: {name:string;reversal?:boolean;referenceLookup?:boolean;reviewCount?:number;view:import("../transactionRules").TransactionRuleView};
+    transactionTables?: Array<{period:string;table:QnaTable}>;
+    daxQueries?: string[];
     analysis?: import("../analysisTemplates").AnalysisAnswer;
     modelQuery?: boolean;
     text: string;

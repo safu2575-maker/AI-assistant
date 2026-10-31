@@ -1,0 +1,141 @@
+// Isolated local UI verification: synthetic Power BI data and simulated sign-in only.
+import express from 'express';
+import { chromium } from 'playwright-core';
+import { createRequire } from 'node:module';
+import { mkdir, readFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { model, fixture } from './visual-fixture.mjs';
+const {ModelSession}=createRequire(import.meta.url)('../dist/visual-server.cjs');
+const f=fixture(), session=new ModelSession(model,'fixture-token',f.fetcher);
+const app=express(); app.use(express.json()); let stored=null; let analysisDelay=0; let blankFixture=false;
+app.get('/ask/teams.js',(_q,r)=>r.type('js').send('window.microsoftTeams={app:{initialize:async()=>{},notifySuccess:()=>{}},authentication:{authenticate:async()=>{}}};'));
+app.post('/ask/api/:method',async(q,r)=>{try{
+ const {method}=q.params;
+ if(method==='login')return r.json({state:'test',proof:'test',url:'about:blank'});
+ if(method==='login-result')return r.json({session:'synthetic-session'});
+ if(method==='model')return r.json(model);
+ if(method==='state'){if(q.body.state)stored=q.body.state;return r.json({state:stored});}
+ if(method==='dictionary')return r.json(await session.dictionary(q.body.field));
+ if(method==='visual-query' && analysisDelay){const delay=analysisDelay;analysisDelay=0;await new Promise(resolve=>setTimeout(resolve,delay));}
+ if(method==='visual-query'){
+  const answer=await session.answer(q.body.question,q.body.settings,q.body.time);
+  // Deliberate UI fixture: exercise blank visibility independently of model arithmetic.
+  if(blankFixture && answer.analysis?.sections?.length){const section=answer.analysis.sections[0];section.answer.analysis.blankRows=[0];section.answer.table.rows[0][0]='Unassigned';section.answer.analysis.includingBlanks={table:structuredClone(section.answer.table),rowQuestions:section.answer.analysis.rowQuestions.slice(),blankRows:[0]};}
+  return r.json(answer);
+ }
+ return r.json({ok:true});
+}catch(e){r.status(400).json({error:e.message});}});
+if(process.env.TEST_POWERBI_SETTINGS) app.get('/ask/visual.js',async(_q,r)=>{const code=await readFile('tab/visual.js','utf8'); assert.ok(code.includes('.hostMode="teams"')); r.type('js').send(code.replace('.hostMode="teams"','.hostMode="powerbi"'));});
+app.use('/ask',express.static('tab'));
+const server=app.listen(0,'127.0.0.1'); await new Promise(r=>server.once('listening',r));
+const browser=await chromium.launch({executablePath:process.env.TEST_BROWSER || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:1000}}), errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+await mkdir('test-output',{recursive:true});
+try{
+
+ await page.goto(`http://127.0.0.1:${server.address().port}/ask/`);
+ await page.getByRole('button',{name:'Continue with Microsoft'}).click();
+ await page.getByRole('button',{name:'Open Q&A, autocomplete, table, and matrix settings'}).click();
+ await page.getByRole('button',{name:'Answers & charts',exact:true}).click();await page.getByRole('tab',{name:'Waterfall',exact:true}).click();
+ await page.locator('.askbics-waterfall-settings').getByRole('button',{name:/Waterfall category:/}).waitFor();
+ await page.locator('.askbics-waterfall-settings').getByRole('button',{name:/Waterfall measure:/}).waitFor();
+ const colour=page.getByRole('button',{name:'Choose positive movements colour',exact:true});
+ await page.getByText('Positive movements',{exact:true}).click();assert.equal(await page.getByRole('dialog',{name:'Positive movements colour',exact:true}).count(),0);
+ await colour.click();await page.getByRole('button',{name:'Use #7c3aed',exact:true}).click();assert.match(await colour.innerText(),/#7C3AED/);
+ await colour.click();await page.getByLabel('Positive movements hex colour',{exact:true}).fill('#123456');await page.getByRole('button',{name:'Apply colour',exact:true}).click();assert.match(await colour.innerText(),/#123456/);
+ const toolbar=page.locator('.askbics-settings-sticky-toolbar');await page.locator('.askbics-qna__settings-body').evaluate(e=>e.scrollTop=300);assert.equal(await page.getByRole('tab',{name:'Waterfall',exact:true}).isVisible(),true);assert.ok((await toolbar.boundingBox()).y>=100);
+ await page.screenshot({path:'test-output/waterfall-colours.png'});
+ await page.getByRole('button',{name:'Cancel',exact:true}).click();
+ await page.getByRole('button',{name:'Waterfall: Build, explore and save financial bridges',exact:true}).click();
+ const workspace=page.getByRole('dialog',{name:'Waterfall workspace'}); const action=async name=>{await workspace.getByRole('button',{name:'Waterfall actions',exact:true}).click();await workspace.getByRole('menuitem',{name,exact:true}).click();};
+ await workspace.getByRole('button',{name:/Waterfall category:/}).click();
+ await workspace.getByRole('option',{name:'Assigned Group',exact:true}).click();
+ await workspace.getByRole('button',{name:/Waterfall measure:/}).click();
+ await workspace.getByRole('option',{name:'Rent Measure',exact:true}).click();
+ await workspace.getByRole('button',{name:'Load data',exact:true}).click();
+ await workspace.getByLabel('Intermediate total Furniture',{exact:true}).waitFor();
+ await workspace.getByLabel('Intermediate total Furniture',{exact:true}).check();
+ await workspace.getByLabel('Intermediate total Fashion',{exact:true}).check();
+ await workspace.getByRole('button',{name:'Apply waterfall',exact:true}).click();
+ assert.match(await workspace.innerText(),/Loaded totals differ/);
+ const bars=workspace.locator('.askbics-qna__chart-viewport rect.askbics-qna__bar');
+ assert.equal(await bars.count(),2);
+ assert.equal(await workspace.locator('.askbics-waterfall-settings').isVisible(),false);
+ const chartWidth=await workspace.locator('.askbics-qna__chart').evaluate(e=>e.getBoundingClientRect().width);
+ const pageWidth=await workspace.evaluate(e=>e.getBoundingClientRect().width);
+ assert.ok(chartWidth>pageWidth*.9,'waterfall chart uses full page width');
+ assert.equal(await bars.first().getAttribute('fill'),'#2563eb');
+ await action('View data');
+ assert.equal(await workspace.locator('.askbics-waterfall-data tbody tr').count(),2);
+ await action('Back to chart');
+ await workspace.getByRole('button',{name:'Chart setup',exact:true}).click();await action('Save as template');
+ await workspace.getByLabel('Template name',{exact:true}).fill('Finance test');
+ await workspace.getByRole('button',{name:'Save template',exact:true}).click();
+ assert.match(await workspace.innerText(),/Template saved/);
+ await action('Open template');await workspace.getByRole('button',{name:/Saved waterfall template:/}).click();
+ await workspace.getByRole('option',{name:'Finance test',exact:true}).click();
+ await workspace.getByRole('button',{name:'Load data',exact:true}).click();
+ await workspace.getByLabel('Intermediate total Furniture',{exact:true}).waitFor();
+ assert.equal(await workspace.getByLabel('Intermediate total Furniture',{exact:true}).isChecked(),true);
+ assert.equal(await workspace.getByLabel('Intermediate total Fashion',{exact:true}).isChecked(),true);
+ await workspace.getByRole('button',{name:'Apply waterfall',exact:true}).click();
+ await workspace.getByRole('button',{name:'Waterfall actions',exact:true}).click();
+ const menu=workspace.getByRole('menu');const menuWidth=await menu.evaluate(e=>e.getBoundingClientRect().width);const rowWidth=await menu.getByRole('menuitem',{name:'Open template',exact:true}).evaluate(e=>e.getBoundingClientRect().width);assert.ok(menuWidth-rowWidth<=12,'menu hover rows fill popup width');assert.ok(menuWidth<185,'menu has no excessive right padding');assert.equal(await menu.getByRole('menuitem',{name:'Back to chart',exact:true}).count(),0);await page.screenshot({path:'test-output/waterfall-menu.png'});await workspace.getByRole('button',{name:'Waterfall actions',exact:true}).click();
+ await page.screenshot({path:'test-output/waterfall.png'});
+ await workspace.getByRole('button',{name:'Chart setup',exact:true}).click();
+ await workspace.getByRole('button',{name:/Total value Fashion:/}).click();
+ await workspace.getByRole('option',{name:'Calculate running total',exact:true}).click();
+ await workspace.getByRole('button',{name:'Apply waterfall',exact:true}).click();
+ assert.doesNotMatch(await workspace.locator('.askbics-qna__chart-context').innerText(),/Loaded totals differ/);
+ await workspace.getByRole('button',{name:/Period mode:/}).click();
+ await workspace.getByRole('option',{name:'YTD',exact:true}).click();
+ await workspace.getByRole('button',{name:'Update',exact:true}).click();
+ assert.match(await workspace.innerText(),/Choose a year/);
+ await workspace.getByRole('button',{name:/Period mode:/}).click();
+ await workspace.getByRole('option',{name:'Month',exact:true}).click();
+ await workspace.getByRole('button',{name:/Year:/}).click();
+ await workspace.getByRole('option',{name:'2026',exact:true}).click();
+ await workspace.getByRole('button',{name:'Update',exact:true}).click();
+ await page.waitForFunction(()=>!document.querySelector('.askbics-waterfall-loadbar > button').disabled);
+ assert.equal(await workspace.locator('.askbics-waterfall-settings').isVisible(),false);
+ assert.equal(await workspace.locator('.askbics-qna__chart-viewport').isVisible(),true);
+ assert.equal(await workspace.locator('.askbics-qna__chart-viewport rect.askbics-qna__bar').count(),2);
+
+ await workspace.getByRole('button',{name:'Chart setup',exact:true}).click();
+ assert.equal(await workspace.getByLabel('Reverse sign Fashion',{exact:true}).isDisabled(),true);
+ await workspace.getByLabel('Intermediate total Fashion',{exact:true}).uncheck();
+ await workspace.getByLabel('Reverse sign Fashion',{exact:true}).check();
+ await workspace.getByRole('button',{name:'Apply waterfall',exact:true}).click();
+ assert.equal(await bars.nth(1).getAttribute('fill'),'#ef4444');
+ await bars.nth(1).click();await page.mouse.move(2,2);
+ assert.equal(await bars.first().evaluate(e=>e.style.opacity),'0.25');
+ await bars.nth(1).click();await page.mouse.move(2,2);
+ assert.equal(await bars.first().evaluate(e=>e.style.opacity),'1');
+ await workspace.getByRole('button',{name:'Update',exact:true}).click();
+ await page.waitForFunction(()=>!document.querySelector('.askbics-waterfall-loadbar > button').disabled);
+ assert.equal(await bars.nth(1).getAttribute('fill'),'#ef4444');
+ await page.screenshot({path:'test-output/waterfall-improved.png'});
+
+ await workspace.getByRole('button',{name:'Chart setup',exact:true}).click();
+ await workspace.getByLabel('Intermediate total Furniture',{exact:true}).uncheck();
+ await workspace.getByLabel('Reverse sign Furniture',{exact:true}).check();
+ await workspace.getByLabel('Reverse sign Fashion',{exact:true}).uncheck();
+ await workspace.getByRole('button',{name:'Apply waterfall',exact:true}).click();
+ assert.equal(await bars.first().getAttribute('fill'),'#ef4444');
+ await workspace.getByRole('button',{name:'Chart setup',exact:true}).click(); await workspace.getByRole('button',{name:/Waterfall sort:/}).click();
+ await workspace.getByRole('option',{name:'Positive first',exact:true}).click(); await workspace.getByRole('button',{name:'Apply waterfall',exact:true}).click();
+ assert.equal(await bars.first().getAttribute('fill'),'#10b981');
+ await workspace.getByRole('button',{name:'Update',exact:true}).click();
+ await page.waitForFunction(()=>!document.querySelector('.askbics-waterfall-loadbar > button').disabled);
+ assert.equal(await bars.first().getAttribute('fill'),'#10b981');
+ await workspace.getByRole('button',{name:'Chart setup',exact:true}).click(); await workspace.getByRole('button',{name:/Waterfall sort:/}).click();
+ await workspace.getByRole('option',{name:'Financial order',exact:true}).click(); await workspace.getByRole('button',{name:'Apply waterfall',exact:true}).click();
+ assert.equal(await bars.first().getAttribute('fill'),'#ef4444');
+ await workspace.getByRole('button',{name:'Chart setup',exact:true}).click();
+ await page.setViewportSize({width:860,height:820});
+ await workspace.locator('.askbics-waterfall-filter-panel > summary').click();
+ await workspace.getByRole('button',{name:'Add filter',exact:true}).click();
+ await page.screenshot({path:'test-output/waterfall-compact-setup.png'});
+ assert.deepEqual(errors,[]);console.log('Waterfall home workflow, loaded intermediate totals and running total browser checks passed.');
+}finally{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

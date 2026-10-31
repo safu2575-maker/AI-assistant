@@ -96,7 +96,7 @@ async function checkVisualBackgroundSelection() {
     setFilterChips(labels, remove) { this.labels = labels; this.remove = remove; }
   }
   const load = compiled.require.bind(compiled);
-  compiled.require = (name) => name === "./fieldParameterTrial" ? { FieldParameterTrial: class { runStartup() {} noteUiStateWrite() {} hydrate() {} selectDataView(views) { return views[0]; } update() {} fail() {} destroy() {} } } : name === "./qna/ui" ? { GlobalQnaUi: UiStub } : name.endsWith(".less") ? {} : load(name);
+  compiled.require = (name) => name === "./fieldParameterTrial" ? { FieldParameterTrial: class { recordOutgoingSelection() {} runStartup() {} noteUiStateWrite() {} hydrate() {} selectDataView(views) { return views[0]; } update() {} fail() {} destroy() {} } } : name === "./qna/ui" ? { GlobalQnaUi: UiStub } : name.endsWith(".less") ? {} : load(name);
   compiled._compile(fs.readFileSync(filename, "utf8"), filename);
   const calls = [];
   const nativeSelections = []; let identitySequence = 0;
@@ -727,6 +727,7 @@ assert.deepEqual(matrixToTable.table.columns, ["Product", "Month", "Revenue"], "
  for (const row of rows) { const key = JSON.stringify(row.slice(0,2)); assert.equal(indices.get(key),rows.findIndex(candidate=>JSON.stringify(candidate.slice(0,2))===key)); }
  const large = Array.from({length:30000},(_,i)=>['Tenant '+i, '2025']);
  assert.equal(indexGroupRows(large,2).get(JSON.stringify(['Tenant 29999','2025'])),29999);
+ assert.deepEqual(collectTextValues(['', '  ', 'Existing'], [[''],['\t'],[null],['Nova Fashion'],[' Home Living ']],0),['Existing','Nova Fashion',' Home Living '], 'blank suggestion values must not poison configuration; preserve real member spelling');
  const values = collectTextValues(['Existing'], [['A'],[null],[12],['A'],['B'],['C']],0,3);
  assert.deepEqual(values,['Existing','A','B']);
  assert.deepEqual(collectTextValues([],large,0),large.slice(0,10000).map(row=>row[0]));
@@ -801,4 +802,16 @@ assert.deepEqual(matrixToTable.table.columns, ["Product", "Month", "Revenue"], "
  assert.equal(formatPowerBiValue(.125,'0.0%'),new Intl.NumberFormat(undefined,{minimumFractionDigits:1,maximumFractionDigits:1}).format(12.5)+'%');
  const {GlobalQnaUi}=require('../.tmp/test/qna/ui');
  assert.equal(GlobalQnaUi.prototype.color(0,'Sales Measure'),GlobalQnaUi.prototype.color(3,'Sales Measure'),'measure color survives series reordering');
+}
+
+{
+ const {GlobalQnaUi}=require('../.tmp/test/qna/ui');
+ const ui=Object.create(GlobalQnaUi.prototype);
+ ui.engine={configurationOptions:()=>({fields:['Waterfall Step'],measures:[]}),getLayoutSettings:()=>({customKpis:[]})};
+ ui.automaticGroupingEnabled=()=>false;ui.measureOptions=()=>['Waterfall Amount'];
+ assert.deepEqual(ui.availableConfiguration().measures,['Waterfall Amount'],'detected measures available with automatic grouping disabled');
+ ui.engine.configurationOptions=()=>({fields:['Waterfall Step'],measures:['Old Rent']});ui.measureOptions=()=>[];
+ assert.deepEqual(ui.availableConfiguration().measures,[],'unbound measures not restored from old local context');
+ ui.measureOptions=undefined;assert.deepEqual(ui.availableConfiguration().measures,['Old Rent'],'local hosts retain their own catalogue');
+ console.log('Settings measure catalogue independent of automatic grouping passed.');
 }

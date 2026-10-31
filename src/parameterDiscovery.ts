@@ -10,14 +10,14 @@ export function parameterMetadataColumns(view: powerbi.DataView): powerbi.DataVi
 }
 
 /** Discover only an unambiguous source supplied by the host. Never guess table names. */
-export function discoverParameter(columns: powerbi.DataViewMetadataColumn[], measures = false): { table: string; column: string; options: string[] } | undefined {
+export function discoverParameters(columns: powerbi.DataViewMetadataColumn[], measures = false): Array<{ table: string; column: string; options: string[] }> {
     const candidates = new Map<string, { table: string; column: string; options: string[] }>();
     for (const field of columns) {
         if (!!(field.isMeasure || field.roles?.measures) !== measures) continue;
         for (const source of field.sourceFieldParameters || []) {
-            if (!source.expr) return undefined;
+            if (!source.expr) continue;
             const target = resolveFilterTarget({ displayName: source.displayName, expr: source.expr });
-            if (!target || !("column" in target) || typeof target.column !== "string") return undefined;
+            if (!target || !("column" in target) || typeof target.column !== "string") continue;
             const key = JSON.stringify(target);
             const candidate = candidates.get(key) || { table: target.table, column: target.column, options: [] };
             const actual = resolveFilterTarget(field);
@@ -27,5 +27,10 @@ export function discoverParameter(columns: powerbi.DataViewMetadataColumn[], mea
             candidates.set(key, candidate);
         }
     }
-    return candidates.size === 1 ? [...candidates.values()][0] : undefined;
+    return [...candidates.values()];
+}
+
+export function discoverParameter(columns: powerbi.DataViewMetadataColumn[], measures = false) {
+    const candidates = discoverParameters(columns, measures);
+    return candidates.length === 1 ? candidates[0] : undefined;
 }

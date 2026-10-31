@@ -4,8 +4,8 @@ import { bindTransactions } from "./transactionView";
 import { QnaResponse, QnaTable } from "./types";
 
 /** Hierarchy navigation uses the same table renderer as every other answer. */
-export function analysisView(initial: QnaResponse, load: (question: string) => Promise<QnaResponse | undefined>, renderTable: (table: QnaTable, question: string) => HTMLElement): HTMLElement {
-    if (initial.analysis?.sections) return consolidatedView(initial, load, renderTable);
+export function analysisView(initial: QnaResponse, load: (question: string) => Promise<QnaResponse | undefined>, renderTable: (table: QnaTable, question: string) => HTMLElement, fields: string[] | (()=>string[]) = []): HTMLElement {
+    if (initial.analysis?.sections) return consolidatedView(initial, load, renderTable, fields);
     const root = document.createElement("div"); root.className = "askbics-analysis";
     let generation = 0;
     const draw = (response: QnaResponse, parent?: { panel: HTMLElement; clear: () => void }) => {
@@ -29,6 +29,7 @@ export function analysisView(initial: QnaResponse, load: (question: string) => P
         }, analysisQuestion(data.state)));
         const status = document.createElement("p"); status.setAttribute("role", "status"); status.hidden = true;
         panel.append(holder, status); root.append(panel);
+        bindTransactions(root,holder,table,data.state,data.rowQuestions,!!data.transactionFields?.length,load,renderTable,fields);
         let selected = -1;
         const decorate = () => holder.querySelectorAll<HTMLElement>("tbody tr[data-source-row]").forEach(row => {
             const index = Number(row.dataset.sourceRow), question = data.rowQuestions[index];
@@ -78,7 +79,7 @@ export function analysisView(initial: QnaResponse, load: (question: string) => P
     draw(initial); return root;
 }
 
-function consolidatedView(initial: QnaResponse, load: (question:string)=>Promise<QnaResponse|undefined>, renderTable:(table:QnaTable,question:string)=>HTMLElement): HTMLElement {
+function consolidatedView(initial: QnaResponse, load: (question:string)=>Promise<QnaResponse|undefined>, renderTable:(table:QnaTable,question:string)=>HTMLElement, fields:string[] | (()=>string[]) = []): HTMLElement {
     const root=document.createElement("div");root.className="askbics-analysis";
     let generation=0;
     const draw=(response:QnaResponse)=>{
@@ -110,31 +111,30 @@ function consolidatedView(initial: QnaResponse, load: (question:string)=>Promise
         const tableElement=(table:QnaTable)=>renderTable({...table,analysisResult:true,modelSnapshot:true,
             rows:[...table.rows,...(table.modelTotals?[table.modelTotals]:[])],rowIndices:[...table.rowIndices,...(table.modelTotals?[[]]:[])]},
             `${data.state.measure} for ${data.state.period}${data.state.comparison ? ` versus ${data.state.comparison}` : ""}`);
-        if(response.table?.modelTotals){const overall=tableElement(response.table);root.append(overall);bindTransactions(root,overall,response.table,data.state,[],!!data.transactionFields?.length,load,renderTable);}
-        for(const section of data.sections!){
-            const details=document.createElement("details");details.className="askbics-analysis-panel";details.open=data.sections!.indexOf(section)<2;
-            const title=document.createElement("summary");title.textContent=section.dimension;details.append(title);
-            const table=section.answer.table!,questions=section.answer.analysis!.rowQuestions;
-            const holder=tableElement(table);details.append(holder);root.append(details);
-            bindTransactions(root,holder,table,data.state,questions,!!data.transactionFields?.length,load,renderTable);
-            const blanks=new Set(section.answer.analysis!.blankRows||[]);
-            let showBlanks=false;
-            let blankToggle:HTMLButtonElement|undefined;
-            if(blanks.size){
-                blankToggle=document.createElement('button');blankToggle.type='button';blankToggle.className='askbics-analysis-blank-toggle';
-                const eye=document.createElementNS('http://www.w3.org/2000/svg','svg');
-                eye.setAttribute('viewBox','0 0 24 24');eye.setAttribute('width','17');eye.setAttribute('height','17');eye.setAttribute('aria-hidden','true');
-                const outline=document.createElementNS('http://www.w3.org/2000/svg','path');outline.setAttribute('d','M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z');
-                const pupil=document.createElementNS('http://www.w3.org/2000/svg','circle');pupil.setAttribute('cx','12');pupil.setAttribute('cy','12');pupil.setAttribute('r','3');
-                for(const part of [outline,pupil]){part.setAttribute('fill','none');part.setAttribute('stroke','currentColor');part.setAttribute('stroke-width','1.6');eye.append(part);}
-                blankToggle.append(eye);
-                title.append(blankToggle);
-                blankToggle.onclick=event=>{event.preventDefault();event.stopPropagation();showBlanks=!showBlanks;decorate();};
-            }
+        if(response.table?.modelTotals){const overall=tableElement(response.table);root.append(overall);bindTransactions(root,overall,response.table,data.state,[],!!data.transactionFields?.length,load,renderTable,fields);}
+        const unassigned=document.createElement("details");unassigned.className="askbics-analysis-panel askbics-analysis-unassigned";
+        const unassignedTitle=document.createElement("summary");unassigned.append(unassignedTitle);
+        let unassignedCount=0,mainCount=0;
+        const jobs=data.sections!.flatMap(section=>{
+            const original=section.answer.table!,meta=section.answer.analysis!,blanks=new Set(meta.blankRows||[]);
+            const indices=original.rows.map((_,i)=>i).filter(i=>!blanks.has(i));
+            const table:QnaTable={...original,rows:indices.map(i=>original.rows[i]),rowIndices:indices.map(i=>original.rowIndices[i]||[]),modelRawRows:original.modelRawRows?indices.map(i=>original.modelRawRows![i]):undefined};
+            const jobs=indices.length ? [{section,table,questions:indices.map(i=>meta.rowQuestions[i]),blank:false,blankRows:new Set<number>()}] : [];
+            const complete=meta.includingBlanks;
+            if(complete?.blankRows.length) jobs.push({section,table:complete.table,questions:complete.rowQuestions,blank:true,blankRows:new Set(complete.blankRows)});
+            return jobs;
+        });
+        for(const {section,table,questions,blank,blankRows} of jobs){
+            const details=document.createElement(blank?"section":"details");details.className="askbics-analysis-panel";
+            if(details instanceof HTMLDetailsElement)details.open=mainCount++<1;
+            const title=document.createElement(blank?"h3":"summary");title.textContent=section.dimension+(blank?" — including blanks":"");details.append(title);
+            const holder=tableElement(table);details.append(holder);
+            if(blank){unassignedCount++;unassigned.append(details);holder.classList.add('askbics-unassigned-table');}
+            else root.append(details);
+            bindTransactions(root,holder,table,data.state,questions,!!data.transactionFields?.length,load,renderTable,fields);
             const decorate=()=>holder.querySelectorAll<HTMLElement>("tbody tr[data-source-row]").forEach(row=>{
                 const index=Number(row.dataset.sourceRow);
-                row.hidden=blanks.has(index)&&!showBlanks;
-                if(blankToggle){blankToggle.setAttribute('aria-label',`${showBlanks?'Hide':'Show'} blank rows in ${section.dimension}`);blankToggle.setAttribute('aria-pressed',String(showBlanks));blankToggle.dataset.tooltip='Show or hide blank members. Grand totals still include their amounts.';}
+                row.classList.toggle("askbics-unassigned-row",blank && blankRows.has(index));
                 const variance=table.rows[index]?.[table.columns.indexOf("Variance")];
                 const header=Array.from(holder.querySelectorAll<HTMLElement>("th[data-column-index]")).find(item=>/^Variance\b/.test(item.textContent||"")&&!item.textContent?.includes("%"));
                 const varianceCell=header ? row.querySelector<HTMLElement>(`td[data-column-index="${header.dataset.columnIndex}"]`) : null;
@@ -155,6 +155,14 @@ function consolidatedView(initial: QnaResponse, load: (question:string)=>Promise
             holder.addEventListener("click",activate,true);
             holder.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" ")activate(event);},true);
             new MutationObserver(decorate).observe(holder,{childList:true,subtree:true});decorate();
+        }
+        if(unassignedCount){
+            const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 20 20');icon.setAttribute('aria-hidden','true');icon.classList.add('askbics-blank-section-icon');
+            const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M5 2.5h7l3 3V17.5H5z M12 2.5v4h3 M8 10h4 M8 13h1 M11 13h1');icon.append(path);
+            const label=document.createElement('span');label.className='askbics-blank-section-label';label.textContent='Sections with blank values';
+            const count=document.createElement('span');count.className='askbics-blank-section-count';count.textContent=unassignedCount+' '+(unassignedCount===1?'dimension':'dimensions');
+            unassignedTitle.append(icon,label,count);
+            const note=document.createElement('p');note.className='askbics-qna__result-summary';note.textContent='Totals include unassigned values.';root.append(note,unassigned);
         }
         if(!data.sections!.length){const empty=document.createElement("p");empty.textContent="No varying dimensions with amounts remain in this selection.";root.append(empty);}
         for(const text of data.notes||[]){const note=document.createElement("p");note.className="askbics-qna__result-summary";note.textContent=text;root.append(note);}

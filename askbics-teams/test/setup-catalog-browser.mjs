@@ -1,0 +1,33 @@
+import {build} from 'esbuild';
+import less from 'less';
+import {readFile,mkdir} from 'node:fs/promises';
+import {chromium} from 'playwright-core';
+import assert from 'node:assert/strict';
+const code=await build({stdin:{contents:`import {FieldParameterTrial} from './src/fieldParameterTrial';
+const root=document.querySelector('#setup');window.writes=[];
+const trial=new FieldParameterTrial(root,{persistProperties:v=>window.writes.push(v),applyJsonFilter:()=>{},refreshHostData:()=>{window.refreshCalls=(window.refreshCalls||0)+1;}});window.trial=trial;
+window.field=name=>({displayName:name,roles:{fields:true},type:{text:true},expr:{source:{entity:'Retail'},ref:name},sourceFieldParameters:[{displayName:'Field label',expr:{source:{entity:'Grouping'},ref:'Field label'}}]});
+trial.update({metadata:{columns:[]},table:{columns:[window.field('City'),window.field('Tenant')],rows:[]}});
+trial.mountSettings(root);`,resolveDir:'..',loader:'ts'},bundle:true,write:false,platform:'browser'});
+const css=(await less.render(await readFile('../style/visual.less','utf8'),{filename:'../style/visual.less'})).css;
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+try{const page=await browser.newPage({viewport:{width:1000,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.setContent('<div class="askbics-qna"><div class="askbics-qna__settings-panel" style="position:static;transform:none;margin:20px;width:700px;max-height:none;display:block;font-family:Segoe UI,sans-serif"><h2>Data setup</h2><div id="setup" class="askbics-settings-page" style="padding:20px"></div></div></div>');await page.addStyleTag({content:css+' .askbics-parameter-trial {position:static!important;max-height:none!important;width:auto!important;}'});await page.addScriptTag({content:code.outputFiles[0].text});
+
+assert.equal(await page.getByLabel('Field name',{exact:true}).count(),0);
+await page.getByRole('button',{name:'Add',exact:true}).click();await page.getByRole('button',{name:'Field',exact:true}).click();
+await page.getByLabel('Field name',{exact:true}).fill('Unit');await page.getByLabel('Source table',{exact:true}).fill('Retail');await page.getByLabel('Source column',{exact:true}).fill('Unit');await page.getByRole('button',{name:'Apply to draft',exact:true}).click();
+assert(await page.evaluate(()=>window.trial.groupingOptions().includes('Unit')));
+await page.evaluate(()=>window.trial.cancelSettings());assert(!await page.evaluate(()=>window.trial.groupingOptions().includes('Unit')));
+await page.evaluate(()=>window.trial.mountSettings(document.querySelector('#setup')));
+await page.getByRole('button',{name:'Add',exact:true}).click();await page.getByRole('button',{name:'Field',exact:true}).click();
+await page.getByLabel('Field name',{exact:true}).fill('Unit');await page.getByLabel('Source table',{exact:true}).fill('Retail');await page.getByLabel('Source column',{exact:true}).fill('Unit');await page.getByRole('button',{name:'Apply to draft',exact:true}).click();assert(await page.evaluate(()=>window.trial.saveSettings()));
+await page.evaluate(()=>{window.trial.update({metadata:{columns:[]},table:{columns:[window.field('Region')],rows:[]}});window.trial.mountSettings(document.querySelector('#setup'));});
+assert(await page.evaluate(()=>window.trial.groupingOptions().includes('Unit')&&window.trial.groupingOptions().includes('Region')));
+await page.getByText('Available fields',{exact:true}).click();
+await page.locator('select[aria-label="Loaded field"]').selectOption('Unit',{force:true});
+await page.getByRole('button',{name:'Edit mapping',exact:true}).click();assert.equal(await page.getByLabel('Source column',{exact:true}).inputValue(),'Unit');await page.getByRole('button',{name:'Cancel edit',exact:true}).click();
+await page.getByRole('button',{name:'Refresh detection',exact:true}).click();assert.equal(await page.evaluate(()=>window.refreshCalls),1,await page.locator('.askbics-detection-toolbar').innerText());
+assert.equal(await page.locator('#setup > .askbics-detection-toolbar').count(),1);
+await mkdir('test-output',{recursive:true});await page.screenshot({path:'test-output/data-setup-catalog.png'});assert.deepEqual(errors,[]);console.log('Data setup catalog: discovery, manual mapping, save/cancel, search and editing passed.');
+}finally{await browser.close();}

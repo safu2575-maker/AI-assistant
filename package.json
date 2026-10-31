@@ -13,7 +13,7 @@
     "package": "pbiviz package",
     "lint": "npx eslint src",
     "build": "tsc -p . --noEmit",
-    "test": "tsc -p . --rootDir src --outDir .tmp/test && node scripts/test.cjs && node scripts/test-parameter.cjs && node scripts/test-analysis.cjs && node scripts/test-pdf.cjs && node scripts/test-chart-timeline.cjs",
+    "test": "tsc -p . --rootDir src --outDir .tmp/test && node scripts/test-transaction-local.cjs && node scripts/test-transaction-summary-reuse.cjs && node scripts/test-model-work-queue.cjs && node scripts/test.cjs && node scripts/test-parameter.cjs && node scripts/test-blank-filters.cjs && node scripts/test-field-layout.cjs && node scripts/test-filter-shortcuts.cjs && node scripts/test-analysis.cjs && node scripts/test-pdf.cjs && node scripts/test-chart-timeline.cjs && node scripts/test-settings-backup.cjs && node scripts/test-custom-kpis.cjs && node scripts/test-answer-transactions.cjs && node scripts/test-clearing-details.cjs && node scripts/test-document-details.cjs && node scripts/test-transaction-rules.cjs && node scripts/test-reversal-matching.cjs && node scripts/test-reversal-lookup.cjs && node scripts/test-answer-groups.cjs && node scripts/test-suggestion-performance.cjs && node scripts/test-waterfall.cjs && node scripts/test-aging.cjs && node scripts/test-cash-flow.cjs && node scripts/test-cash-flow-scope.cjs && node scripts/test-cash-flow-performance.cjs && node scripts/test-cash-flow-clearing-groups.cjs && node scripts/test-cash-flow-continuation.cjs",
     "build:all": "npm run build && npm --prefix askbics-teams run build && npm run package",
     "test:all": "npm test && npm --prefix askbics-teams test"
   },

@@ -10,6 +10,44 @@ import { UserError } from '../dist/src/model.js';
 import { model, fixture } from './visual-fixture.mjs';
 const {ModelSession} = createRequire(import.meta.url)('../dist/visual-server.cjs');
 const service = () => {const f=fixture(); return {...f, session:new ModelSession(model,'fixture-token',f.fetcher)};};
+
+test('wide category columns become rows in the shared model adapter without marginal queries',async()=>{
+ const f=fixture();let grouped=0;
+ const session=new ModelSession(model,'fixture-token',async(url,init)=>{
+  const dax=JSON.parse(init.body).queries[0].query;
+  if(dax.includes('"G1",')){
+   grouped++;
+   return new Response(JSON.stringify({results:[{tables:[{rows:Array.from({length:13},(_,i)=>({'[G0]':'A','[G1]':'City '+i,'[M0]':i+1}))}]}]}));
+  }
+  return f.fetcher(url,init);
+ });
+ const answer=await session.answer('Matrix; rows: Assigned Group; columns: City; values: Rent Measure');
+ assert.equal(answer.table.modelPivot,undefined);assert.equal(answer.table.rows.length,13);
+ assert.deepEqual(answer.table.modelEditor.rows,['Assigned Group','City']);assert.deepEqual(answer.table.modelEditor.columns,[]);
+ assert.match(answer.text,/more than 12/);assert.equal(grouped,1);
+ assert.ok(!f.queries.some(q=>q.includes('"G0",')),'no row/column marginal requests for the row layout');
+});
+
+test('summary cards combine measures and omit the unused scalar-total round trip',async()=>{
+ const {session,queries}=service();
+ const result=await session.request({groups:['City'],measures:['Rent Measure','Sales Measure'],filters:[],summary:[],summaryCard:true},{fields:model.dimensions});
+ assert.equal(queries.length,1);assert.ok(!queries[0].startsWith('EVALUATE ROW('));
+ assert.equal(result.table.totals,undefined);assert.equal(result.table.columns.length,3);
+});
+
+test('cancel aborts the active Power BI fetch and a later question can recover',async()=>{
+ let signal;
+ const f=fixture();let slow=true;
+ const session=new ModelSession(model,'fixture-token',(url,init)=>{
+  if(!slow)return f.fetcher(url,init);
+  signal=init.signal;
+  return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));
+ });
+ const pending=session.answer('Rent Measure');
+ assert.ok(signal);session.cancel();assert.equal(signal.aborted,true);
+ await assert.rejects(pending);
+ slow=false;assert.equal((await session.answer('Rent Measure')).kpi.value,'1,000');
+});
 test('original parser answers bare measure and the exact screenshot question',async()=>{
  const {session,queries}=service();
  assert.equal((await session.answer('rent measure')).kpi.value,'1,000');

@@ -1,0 +1,530 @@
+{
+  "rows": [
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000001",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -100
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000001",
+      "item": "002",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 100,
+      "clearing": "000201",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000002",
+      "item": "001",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -100,
+      "clearing": "000201",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000002",
+      "item": "002",
+      "account": "122",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 100,
+      "clearing": "000202",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000003",
+      "item": "001",
+      "account": "122",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -100,
+      "clearing": "000202",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000003",
+      "item": "002",
+      "account": "130",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 100
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000101",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -50
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000101",
+      "item": "002",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 50,
+      "reference": "000100",
+      "referenceYear": "2025",
+      "referenceItem": "001"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000102",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -50
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000102",
+      "item": "002",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 50,
+      "reference": "000100",
+      "referenceYear": "2025",
+      "referenceItem": "001"
+    },
+    {
+      "company": "9720",
+      "year": "2025",
+      "document": "000100",
+      "item": "001",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2025-12-01",
+      "amount": -100
+    },
+    {
+      "company": "9720",
+      "year": "2025",
+      "document": "000100",
+      "item": "002",
+      "account": "130",
+      "currency": "SAR",
+      "date": "2025-12-01",
+      "amount": 100
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000301",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -100
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000301",
+      "item": "002",
+      "account": "130",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 60
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000301",
+      "item": "003",
+      "account": "140",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 40
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000401",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -25
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000401",
+      "item": "002",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 25,
+      "clearing": "000499",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000501",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -50
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000501",
+      "item": "002",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 50,
+      "reference": "000502",
+      "referenceYear": "2026",
+      "referenceItem": "001"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000502",
+      "item": "001",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -100
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000502",
+      "item": "002",
+      "account": "130",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 60
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000502",
+      "item": "003",
+      "account": "140",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 40
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000601",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -20
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000601",
+      "item": "002",
+      "account": "150",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 20
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000701",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -10
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000701",
+      "item": "002",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 10,
+      "clearing": "000710",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000702",
+      "item": "001",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -10,
+      "clearing": "000710",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000702",
+      "item": "002",
+      "account": "122",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 10,
+      "clearing": "000720",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000703",
+      "item": "001",
+      "account": "122",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -10,
+      "clearing": "000720",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000703",
+      "item": "002",
+      "account": "121",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 10,
+      "clearing": "000710",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000801",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 200
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000801",
+      "item": "002",
+      "account": "160",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -200,
+      "clearing": "000810",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000802",
+      "item": "001",
+      "account": "160",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 200,
+      "clearing": "000810",
+      "clearingYear": "2026",
+      "clearingDate": "2026-10-01"
+    },
+    {
+      "company": "9720",
+      "year": "2026",
+      "document": "000802",
+      "item": "002",
+      "account": "170",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -200
+    },
+    {
+      "company": "9721",
+      "year": "2026",
+      "document": "000001",
+      "item": "001",
+      "account": "120",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": -999
+    },
+    {
+      "company": "9721",
+      "year": "2026",
+      "document": "000001",
+      "item": "002",
+      "account": "130",
+      "currency": "SAR",
+      "date": "2026-10-01",
+      "amount": 999
+    }
+  ],
+  "rules": [
+    {
+      "account": "120",
+      "role": "bank",
+      "category": ""
+    },
+    {
+      "account": "150",
+      "role": "bank",
+      "category": ""
+    },
+    {
+      "account": "121",
+      "role": "intermediate",
+      "category": ""
+    },
+    {
+      "account": "122",
+      "role": "intermediate",
+      "category": ""
+    },
+    {
+      "account": "160",
+      "role": "intermediate",
+      "category": ""
+    },
+    {
+      "account": "130",
+      "role": "destination",
+      "category": "Expense"
+    },
+    {
+      "account": "140",
+      "role": "destination",
+      "category": "Inventory"
+    },
+    {
+      "account": "170",
+      "role": "destination",
+      "category": "Customer receipts"
+    }
+  ],
+  "expected": [
+    [
+      "000001",
+      "001",
+      "Expense",
+      -100,
+      "Resolved"
+    ],
+    [
+      "000101",
+      "001",
+      "Expense",
+      -50,
+      "Resolved"
+    ],
+    [
+      "000102",
+      "001",
+      "Expense",
+      -50,
+      "Resolved"
+    ],
+    [
+      "000301",
+      "001",
+      "Expense",
+      -60,
+      "Resolved"
+    ],
+    [
+      "000301",
+      "001",
+      "Inventory",
+      -40,
+      "Resolved"
+    ],
+    [
+      "000401",
+      "001",
+      "Unresolved",
+      -25,
+      "Missing linked posting"
+    ],
+    [
+      "000501",
+      "001",
+      "Unresolved",
+      -50,
+      "Allocation unclear"
+    ],
+    [
+      "000601",
+      "001",
+      "Internal transfers",
+      -20,
+      "Resolved"
+    ],
+    [
+      "000601",
+      "002",
+      "Internal transfers",
+      20,
+      "Resolved"
+    ],
+    [
+      "000701",
+      "001",
+      "Unresolved",
+      -10,
+      "Cycle detected"
+    ],
+    [
+      "000801",
+      "001",
+      "Customer receipts",
+      200,
+      "Resolved"
+    ]
+  ]
+}

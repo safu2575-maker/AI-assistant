@@ -3,19 +3,20 @@ const { settingsSelect } = require('../.tmp/test/qna/settingsSelect');
 const previousDocument = global.document;
 function element() {
   return {
-    children: [], attrs: {}, handlers: {}, dataset: {}, value: '',
+    ownerDocument: global.document, children: [], attrs: {}, handlers: {}, dataset: {}, value: '',
     append(...children) { this.children.push(...children); },
     replaceChildren() { this.children = []; },
     setAttribute(key,value) { this.attrs[key] = value; },
     getAttribute(key) { return this.attrs[key]; },
     removeAttribute(key) { delete this.attrs[key]; },
     addEventListener(key,handler) { this.handlers[key] = handler; },
+    querySelector() { return null; },
     contains(node) { return node === this || this.children.some(child => child.contains?.(node)); },
     focus() { global.document.activeElement = this; }
   };
 }
 try {
-  global.document = { createElement: element, activeElement: null };
+  global.document = { createElement: element, activeElement: null, addEventListener() {} };
   const select = element();
   select.options = [{value:'',textContent:'Not configured'},{value:'MonthIndex',textContent:'MonthIndex'}];
   Object.defineProperty(select,'selectedOptions',{get(){return select.options.filter(option=>option.value===select.value);}});

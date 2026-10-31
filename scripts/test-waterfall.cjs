@@ -1,0 +1,33 @@
+const assert=require('node:assert/strict');
+const {waterfallSteps,waterfallView}=require('../.tmp/test/qna/waterfall');
+let result=waterfallSteps([100,-30,70,-10,60],[true,false,true,false,true]);
+assert.equal(result.balance,60);assert.deepEqual(result.warnings,[]);
+assert.deepEqual(result.steps.map(s=>[s.start,s.end]),[[0,100],[100,70],[0,70],[70,60],[0,60]]);
+result=waterfallSteps([100,-30,999],[false,false,true],['loaded','loaded','running']);assert.equal(result.balance,70);assert.equal(result.steps[2].value,70);
+assert.deepEqual(waterfallSteps([100,-30,80],[false,false,true]).warnings,[2]);
+assert.equal(waterfallSteps([-20,-5,-25],[false,false,true]).balance,-25);
+const source={type:'waterfall',title:'Test',labels:['A','B'],values:[100,-20],valueLabels:['100','-20'],rowIndices:[[0],[1]],modelRowSelections:[[{table:'Data',column:'Category',value:'A'}],[{table:'Data',column:'Category',value:'B'}]]};
+const view=waterfallView(source,[{include:false,total:false,mode:'loaded',label:'A'},{include:true,total:true,mode:'loaded',label:'End'}]);
+assert.deepEqual(view.values,[-20]);assert.deepEqual(view.modelRowSelections,[source.modelRowSelections[1]]);assert.deepEqual(source.labels,['A','B']);
+assert.throws(()=>waterfallView(source,[{include:false},{include:false}]),/Include/);
+console.log('Waterfall totals, negative values, reconciliation and exclusion metadata passed.');
+
+const reversed=waterfallView(source,[{include:true,total:false,mode:'loaded',label:'A',reverse:true},{include:true,total:false,mode:'loaded',label:'B',reverse:true}]);
+assert.deepEqual(reversed.values,[-100,20]);assert.deepEqual(source.values,[100,-20]);
+assert.deepEqual(reversed.waterfall.originalValues,[100,-20]);
+assert.equal(waterfallView(source,[{include:true,total:true,mode:'running',label:'A',reverse:true},{include:false}]).values[0],100);
+const {sortWaterfall}=require('../.tmp/test/qna/waterfall');
+const ordered=sortWaterfall({...source,labels:['December','January']});assert.deepEqual(ordered.labels,['January','December']);assert.deepEqual(ordered.values,[-20,100]);
+assert.deepEqual(sortWaterfall({...source,labels:['09 Closing','01 Opening']}).labels,['01 Opening','09 Closing']);
+assert.deepEqual(sortWaterfall({...source,labels:['2026-09','2025-12']}).labels,['2025-12','2026-09']);
+
+const signed={...source,waterfallSort:'positive',labels:['Open','Expense','Gain','Zero','Subtotal','Loss 2','Gain 2','Close'],values:[100,-30,20,0,90,-10,5,85],valueLabels:['100','-30','20','0','90','-10','5','85'],rowIndices:Array.from({length:8},(_,i)=>[i]),modelRowSelections:undefined};
+const roles=signed.labels.map((label,i)=>({label,include:true,total:[0,4,7].includes(i),mode:'loaded'}));
+const sorted=waterfallView(signed,roles);
+assert.deepEqual(sorted.labels,['Open','Gain','Zero','Expense','Subtotal','Gain 2','Loss 2','Close']);
+assert.deepEqual(sorted.rowIndices,[[0],[2],[3],[1],[4],[6],[5],[7]]);
+assert.equal(waterfallSteps(sorted.values,sorted.waterfall.totals).balance,85);
+assert.deepEqual(waterfallSteps(sorted.values,sorted.waterfall.totals).warnings,[]);
+assert.deepEqual(waterfallView({...signed,waterfallSort:'financial'},roles).labels,signed.labels);
+const flipped=waterfallView({...source,waterfallSort:'positive'},[{include:true,total:false,mode:'loaded',label:'A',reverse:true},{include:true,total:false,mode:'loaded',label:'B',reverse:true}]);
+assert.deepEqual(flipped.labels,['B','A']);assert.deepEqual(flipped.values,[20,-100]);

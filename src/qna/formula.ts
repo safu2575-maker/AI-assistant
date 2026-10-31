@@ -2,7 +2,7 @@ type Value = number | null;
 type Expression = () => Value;
 
 /** Numeric row formulas. Parse both branches, but evaluate only the selected branch. */
-export function evaluateFormula(source: string, values: Map<string, Value>): Value {
+export function evaluateFormula(source: string, values: Map<string, Value>, validateOnly = false, divisionFallback: Value = 0): Value {
     if (source.length > 4000) throw new Error("Formula is too long (maximum 4,000 characters).");
     const input = source.trim().replace(/^=/, "").replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-");
     const tokens = input.match(/\[[^\]]+\]|(?:\d+(?:\.\d*)?|\.\d+)|[A-Za-z_][A-Za-z0-9_]*|>=|<=|<>|!=|==|[=<>()+\-*/,;]/g) || [];
@@ -56,7 +56,7 @@ export function evaluateFormula(source: string, values: Map<string, Value>): Val
             if (name === "OR") return Number(args.some(arg => !!arg()));
             if (name === "NOT") return Number(!args[0]());
             if (name === "COALESCE") { for (const arg of args) { const value = arg(); if (value !== null) return value; } return null; }
-            if (name === "DIVIDE") { const denominator = args[1](); if (denominator === null || denominator === 0) return args[2]?.() ?? 0; const numerator = args[0](); return numerator === null ? null : numerator / denominator; }
+            if (name === "DIVIDE") { const denominator = args[1](); if (denominator === null || denominator === 0) return args.length===3 ? args[2]() : divisionFallback; const numerator = args[0](); return numerator === null ? null : numerator / denominator; }
             const nums = args.map(arg => number(arg()));
             if (name === "ABS") return Math.abs(nums[0]);
             if (name === "MIN") return Math.min(...nums);
@@ -68,6 +68,7 @@ export function evaluateFormula(source: string, values: Map<string, Value>): Val
     };
     const expression = comparison();
     if (position !== tokens.length) throw new Error(`Unexpected token: ${tokens[position]}`);
+    if (validateOnly) return null;
     const result = expression();
     if (result !== null && !Number.isFinite(result)) throw new Error("The formula did not return a finite number.");
     return result;

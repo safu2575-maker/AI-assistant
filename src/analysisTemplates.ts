@@ -1,3 +1,6 @@
+import { ClearingSettings, validateClearing, validateDocument } from "./clearingDetails";
+import { loadTransactionResult, resolveTransactionRule, validateTransactionRule, TransactionRule, TransactionRuleView } from "./transactionRules";
+import { applyGroupFilters } from "./answerGroups";
 import { BasicFilter } from "powerbi-models";
 import { ParameterConfig, ParameterPlan, planParameterQuestion } from "./parameterQuery";
 import { QnaResponse, QnaTable } from "./qna/types";
@@ -6,6 +9,10 @@ import { formatPowerBiValue } from "./dataAdapter";
 import { revenueRequest } from "./revenue";
 
 export interface AnalysisDefinition {
+    summaryCards?: import("./qna/summaryCardSettings").SummaryCards;
+    clearing?: ClearingSettings;
+    document?: ClearingSettings;
+    transactionRule?: TransactionRule;
     transactionFields?: string[];
     consolidated?: boolean;
     excludedDimensions?: string[];
@@ -30,6 +37,8 @@ export interface AnalysisSettings {
     revision?: number;
 }
 export interface AnalysisState {
+    transactionRuleView?: TransactionRuleView;
+    summarizeBy?: string;
     transactions?: "current" | "comparison" | "both";
     mode: "breakdown" | "variance";
     measure: string;
@@ -41,8 +50,10 @@ export interface AnalysisState {
     selections: Array<{ field: string; values: string[]; blank?: boolean }>;
 }
 export interface AnalysisAnswer {
+    includingBlanks?: {table: QnaTable; rowQuestions: Array<string | null>; blankRows: number[]};
     transactionFields?: string[];
     blankRows?: number[];
+    unassignedTotals?: string[];
     movementScore?: number;
     sections?: Array<{ dimension: string; answer: QnaResponse; score: number }>;
     notes?: string[];
@@ -68,6 +79,10 @@ export function analysisQuestion(state: AnalysisState): string {
     return `${state.mode === "variance" ? "Variance" : "Explain"} ${state.measure} for ${state.period}${marker}${encodeURIComponent(JSON.stringify(state))}`;
 }
 export function validateAnalysis(definition: AnalysisDefinition, fields: string[], measures: string[]): void {
+    if(definition.summaryCards?.enabled && (definition.summaryCards.cards.length>10 || definition.summaryCards.cards.some(c=>!definition.transactionFields?.includes(c.field)||c.measure&&!measures.includes(c.measure))))throw new Error("Summary cards: include each card field in Transaction columns and select an available measure (maximum 10 cards).");
+    validateClearing(definition?.clearing,fields,measures,definition?.transactionFields);
+    validateDocument(definition?.document,fields,measures,definition?.transactionFields);
+    validateTransactionRule(definition?.transactionRule, fields, measures, definition?.transactionFields);
     if (!definition || !measures.includes(definition.measure)) throw new Error("Choose an available default measure for Analysis templates.");
     if (!definition.consolidated && (!Array.isArray(definition.hierarchy) || !definition.hierarchy.length || definition.hierarchy.length > 5 ||
         new Set(definition.hierarchy).size !== definition.hierarchy.length || definition.hierarchy.some(name => !fields.includes(name)))
@@ -75,8 +90,8 @@ export function validateAnalysis(definition: AnalysisDefinition, fields: string[
     const keywords = [...definition.breakdownKeywords, ...definition.varianceKeywords].map(value => value.trim().toLowerCase());
     if (!definition.breakdownKeywords.length || !definition.varianceKeywords.length || keywords.some(value => !/^[a-z][a-z ]{1,39}$/.test(value)) || new Set(keywords).size !== keywords.length)
         throw new Error("Use unique words or short phrases for each analysis, separated by commas.");
-    if (keywords.some(value => [...fields, ...measures].some(name => word(value).test(name))))
-        throw new Error("Analysis keywords must not overlap field or measure names.");
+    // Model names are protected before keyword matching in planAnalysis.
+    // An unrelated measure such as "Rent Variance" must not disable all analysis.
     if (keywords.some(value => /^(not|excluding|before|after|where|with|for|in|by|and|or|top|bottom|ytd|ttm|versus|vs)$/.test(value)))
         throw new Error("Use analysis-specific keywords, not filter, ranking or period instructions.");
     if (keywords.some((value,index)=>keywords.some((other,otherIndex)=>index!==otherIndex && word(value).test(other))))
@@ -116,6 +131,7 @@ export function planAnalysis(question: string, config: ParameterConfig, measures
         let state: AnalysisState;
         try { state = JSON.parse(decodeURIComponent(question.slice(saved + marker.length))); } catch { throw new Error("Invalid analysis question. Ask the question again."); }
         if (!state || !["breakdown", "variance"].includes(state.mode) || !measures.includes(state.measure) ||
+            (state.summarizeBy !== undefined && (typeof state.summarizeBy !== "string" || !config.options.includes(state.summarizeBy) && !config.answerGroups?.some(g=>g.enabled&&g.kind==='field'&&g.name===state.summarizeBy))) ||
             (state.transactions !== undefined && !["current", "comparison", "both"].includes(state.transactions)) ||
             !Number.isInteger(state.level) || state.level < 0 || state.level >= definition.hierarchy.length ||
             ![0, 5, 10, 20].includes(state.top) || typeof state.base !== "string" || typeof state.period !== "string" ||
@@ -191,7 +207,7 @@ export async function runAnalysis(state: AnalysisState, config: ParameterConfig,
     if (config.analysis?.published && config.analysis.published.consolidated !== false) return runConsolidated(state, consolidatedConfig(config), measures, load);
     return runDimension(state, config, measures, load);
 }
-async function runDimension(state: AnalysisState, config: ParameterConfig, measures: string[], load: (plan: ParameterPlan) => Promise<QnaResponse>): Promise<QnaResponse> {
+async function runDimension(state: AnalysisState, config: ParameterConfig, measures: string[], load: (plan: ParameterPlan) => Promise<QnaResponse>, completeMembers = false): Promise<QnaResponse> {
     const definition = config.analysis!.published!;
     const fieldName = definition.hierarchy[state.level], field = config.fields.find(item=>item.name===fieldName)!;
     const periods = [state.period, ...(state.mode==="variance" ? [state.comparison!] : [])];
@@ -226,7 +242,7 @@ async function runDimension(state: AnalysisState, config: ParameterConfig, measu
     const impact=(members?:string[])=>absoluteMovement!==null && absoluteMovement>0 && Number.isFinite(absoluteMovement)
         ? `${((members ? members.reduce((sum,name)=>sum+(movements.get(name) || 0),0) : absoluteMovement)/absoluteMovement*100).toFixed(2)}%` : "—";
     const rows=names.map(name=>({name,values:values.map(map=>map.has(name) ? map.get(name)??null : 0),members:[name]}))
-        .filter(row=>!definition.consolidated || (row.values.some(value=>value!==null && value!==0) &&
+        .filter(row=>completeMembers || !definition.consolidated || (row.values.some(value=>value!==null && value!==0) &&
             (!definition.hideUnchanged || state.mode!=="variance" || row.values[0]!==row.values[1])));
     const magnitude=(row:typeof rows[number])=> Math.abs(state.mode==="variance" ? (row.values[0]??0)-(row.values[1]??0) : row.values[0]??0);
     rows.sort((a,b)=>magnitude(b)-magnitude(a)||a.name.localeCompare(b.name));
@@ -244,7 +260,7 @@ async function runDimension(state: AnalysisState, config: ParameterConfig, measu
             }
             const plan=plans[index];
             const filters=members ? [...plan.filters.filter(filter=>JSON.stringify(filter.target)!==JSON.stringify({table:field.table,column:field.column})),
-                new BasicFilter({table:field.table,column:field.column},"In",members.map(value=>field.type==="number"?Number(value):value)).toJSON()] : plan.filters;
+                new BasicFilter({table:field.table,column:field.column},"In",members.map(value=>isBlankMember(value)?null as any:field.type==="number"?Number(value):value)).toJSON()] : plan.filters;
             const total=await load({...plan,groups:[],filters});
             result.push(total.table?.modelEvaluatedTotals?.[0] ? total.table.modelRawTotals?.[0]??null : null);
         }
@@ -262,12 +278,14 @@ async function runDimension(state: AnalysisState, config: ParameterConfig, measu
             ...(definition.variancePercent ? [difference===null || prior===0 || prior===null ? "—" : `${(difference/Math.abs(prior)*100).toFixed(2)}%`] : []),impact(members)];
     };
     const columns=state.mode==="breakdown" ? [fieldName,state.period] : [fieldName,...periods,"Variance",...(definition.variancePercent?["Variance %"]:[]),"Impact %"];
+    const blankNames=blankMembers.map(row=>row.name);
+    const unassignedTotals=blankMembers.length ? cells('Unassigned total',blankMembers.length===1?blankMembers[0].values:await aggregate(blankNames),blankNames) : undefined;
     const rowQuestions=shown.map(row=>definition.consolidated ? analysisQuestion({...state,level:0,selections:[...state.selections.filter(item=>item.field!==fieldName),{field:fieldName,values:row.members,...(blankMembers.includes(row)?{blank:true}:{})}]}) : state.level+1<definition.hierarchy.length ? analysisQuestion({...state,level:state.level+1,selections:[...state.selections,{field:fieldName,values:row.members}]}) : null);
     const leader=shown[0], delta=leader && state.mode==="variance" && leader.values.every(value=>value!==null) ? leader.values[0]!-leader.values[1]! : null;
     const explanation=leader ? state.mode==="variance" ? `${leader.name} has the largest absolute change${delta===null?"":`: ${delta>0?"+":""}${number(delta)}`}.` : `${leader.name} is the largest contributor by absolute amount.` : "No matching members.";
     return {modelQuery:true,text:`${state.measure} · ${periods.join(" versus ")} · ${fieldName}. ${explanation}`,
         table:{columns,rows:shown.map(row=>cells(row.name,row.values,row.members)),rowIndices:shown.map(()=>[]),modelTotals:totals?cells("Grand Total",totals):undefined},
-        analysis:{state,hierarchy:definition.hierarchy,revision:config.analysis?.revision||1,rowQuestions,movementScore:rows.length ? magnitude(rows[0]) : 0,
+        analysis:{state,hierarchy:definition.hierarchy,revision:config.analysis?.revision||1,rowQuestions,unassignedTotals,movementScore:rows.length ? magnitude(rows[0]) : 0,
             clearQuestion:analysisQuestion({...state,level:0,selections:[]}),filters:plans[0].summary,
             favourable:definition.favourable}};
 }
@@ -316,39 +334,65 @@ async function runConsolidated(state: AnalysisState, config: ParameterConfig, me
             if (plan.groups.length && !plans.some(item => JSON.stringify(item) === JSON.stringify(plan))) plans.push(plan);
             return cached(plan);
         });
+        const raw = await cached(plans[0]);
+        const hasBlanks = raw.table!.rows.some(row => isBlankMember(row[0])) || plans.length > 1 && (await cached(plans[1])).table!.rows.some(row => isBlankMember(row[0]));
+        const complete = hasBlanks ? await runDimension({...state, level, top:0}, {...config,analysis:{...config.analysis,published:{...definition,hideUnchanged:false}}}, measures, cached, true) : undefined;
+        if (complete) complete.analysis!.rowQuestions = complete.analysis!.rowQuestions.map(question => {
+            if (!question) return null;
+            const selection:AnalysisState=JSON.parse(decodeURIComponent(question.slice(question.indexOf(marker)+marker.length)));
+            return analysisQuestion({...selection,top:state.top});
+        });
         const table = result.table!;
         if (!overall) filters = result.analysis!.filters;
-        if (revenueEnabled) {
-            const ratios: QnaTable[] = [];
-            for (const plan of plans) {
-                const response = await revenueRequest(plan, config, cached, (view) => {
-                    const data = view.table!;
-                    return {text: "", table: {columns: data.columns.map(column => column.displayName),
-                        rows: (data.rows || []).map(row => row.map(value => value == null ? "" : String(value))),
-                        rowIndices: (data.rows || []).map(() => []), modelRawRows: (data.rows || []).map(row => row.map(value => typeof value === "number" ? value : null)),
-                        modelRawTotals: data.totals?.map(value => typeof value === "number" ? value : null)}};
-                });
-                ratios.push(response.table!);
-            }
-            const percentage = (value: number | null | undefined) => value == null ? "—" : `${(value * 100).toFixed(2)}%`;
-            for (let period = 0; period < ratios.length; period++) {
-                const ratio = ratios[period];
-                table.columns.push(`${period === 0 ? state.period : state.comparison} · % of revenue`);
-                for (let index = 0; index < table.rows.length; index++) {
-                    const question = result.analysis!.rowQuestions[index];
-                    const selected: AnalysisState | undefined = question ? JSON.parse(decodeURIComponent(question.slice(question.indexOf(marker) + marker.length))) : undefined;
-                    const members = selected?.selections.find(item => item.field === dimension)?.values || [table.rows[index][0]];
-                    const blank=selected?.selections.find(item=>item.field===dimension)?.blank;
-                    let value = ratio.modelRawRows?.[ratio.rows.findIndex(row => blank ? isBlankMember(row[0]) : row[0] === members[0])]?.[1];
-                    if (members.length > 1) {
-                        const field = config.fields.find(item => item.name === dimension)!;
-                        const response = await revenueRequest({...plans[period], groups: [], filters: [...plans[period].filters,
-                            new BasicFilter({table:field.table,column:field.column}, "In", members.map(member=>field.type==="number"?Number(member):member)).toJSON()]}, config, cached, view => ({text:"", table:{columns:[],rows:[],rowIndices:[],modelRawTotals:view.table?.totals?.map(value=>typeof value==="number"?value:null)}}));
-                        value = response.table?.modelRawTotals?.[0];
-                    }
-                    table.rows[index].push(percentage(value));
+        for (const detail of complete ? [result,complete] : [result]) {
+            const table=detail.table!;
+            if (revenueEnabled) {
+                const ratios: QnaTable[] = [];
+                for (const plan of plans) {
+                    const response = await revenueRequest(plan, config, cached, (view) => {
+                        const data = view.table!;
+                        return {text: "", table: {columns: data.columns.map(column => column.displayName),
+                            rows: (data.rows || []).map(row => row.map(value => value == null ? "" : String(value))),
+                            rowIndices: (data.rows || []).map(() => []), modelRawRows: (data.rows || []).map(row => row.map(value => typeof value === "number" ? value : null)),
+                            modelRawTotals: data.totals?.map(value => typeof value === "number" ? value : null)}};
+                    });
+                    ratios.push(response.table!);
                 }
-                table.modelTotals?.push(percentage(ratio.modelRawTotals?.[1]));
+                const percentage = (value: number | null | undefined) => value == null ? "—" : `${(value * 100).toFixed(2)}%`;
+                for (let period = 0; period < ratios.length; period++) {
+                    const ratio = ratios[period];
+                    const memberIndices = new Map<string, number>();
+                    let blankIndex = -1;
+                    ratio.rows.forEach((row, index) => {
+                        if (!memberIndices.has(row[0])) memberIndices.set(row[0], index);
+                        if (blankIndex < 0 && isBlankMember(row[0])) blankIndex = index;
+                    });
+                    table.columns.push(`${period === 0 ? state.period : state.comparison} · % of revenue`);
+                    for (let index = 0; index < table.rows.length; index++) {
+                        const question = detail.analysis!.rowQuestions[index];
+                        const selected: AnalysisState | undefined = question ? JSON.parse(decodeURIComponent(question.slice(question.indexOf(marker) + marker.length))) : undefined;
+                        const members = selected?.selections.find(item => item.field === dimension)?.values || [table.rows[index][0]];
+                        const blank=selected?.selections.find(item=>item.field===dimension)?.blank;
+                        let value = ratio.modelRawRows?.[blank ? blankIndex : memberIndices.get(members[0]) ?? -1]?.[1];
+                        if (members.length > 1) {
+                            const field = config.fields.find(item => item.name === dimension)!;
+                            const response = await revenueRequest({...plans[period], groups: [], filters: [...plans[period].filters,
+                                new BasicFilter({table:field.table,column:field.column}, "In", members.map(member=>field.type==="number"?Number(member):member)).toJSON()]}, config, cached, view => ({text:"", table:{columns:[],rows:[],rowIndices:[],modelRawTotals:view.table?.totals?.map(value=>typeof value==="number"?value:null)}}));
+                            value = response.table?.modelRawTotals?.[0];
+                        }
+                        table.rows[index].push(percentage(value));
+                    }
+                    table.modelTotals?.push(percentage(ratio.modelRawTotals?.[1]));
+                    if(detail.analysis!.unassignedTotals){
+                        const blankRows=table.rows.filter(row=>isBlankMember(row[0]));
+                        if(blankRows.length===1)detail.analysis!.unassignedTotals.push(blankRows[0].at(-1)!);
+                        else {
+                            const field=config.fields.find(item=>item.name===dimension)!;
+                            const response=await revenueRequest({...plans[period],groups:[],filters:[...plans[period].filters,new BasicFilter({table:field.table,column:field.column},'In',[null as any]).toJSON()]},config,cached,view=>({text:'',table:{columns:[],rows:[],rowIndices:[],modelRawTotals:view.table?.totals?.map(value=>typeof value==='number'?value:null)}}));
+                            detail.analysis!.unassignedTotals.push(percentage(response.table?.modelRawTotals?.[0]));
+                        }
+                    }
+                }
             }
         }
         if (!overall) {
@@ -356,12 +400,16 @@ async function runConsolidated(state: AnalysisState, config: ParameterConfig, me
             const impactColumn=table.columns.indexOf('Impact %');
             if(overall.modelTotals && impactColumn>=0)overall.modelTotals[impactColumn]='—';
         }
-        const raw = await cached(plans[0]);
         // A constant field provides no breakdown. Its amount is still represented by Overall.
-        if (raw.table!.rows.length <= 1 || !table.rows.length) continue;
+        if (((raw.table!.rows.length <= 1 && !table.rows.some(row=>isBlankMember(row[0]))) || !table.rows.length) && !complete) continue;
         const score = result.analysis!.movementScore || 0;
         result.analysis!.blankRows=[];
         table.rows.forEach((row,index)=>{if (isBlankMember(row[0])) {result.analysis!.blankRows!.push(index);row[0] = "Unassigned";}});
+        if (complete) {
+            const blankRows:number[]=[];
+            complete.table!.rows.forEach((row,index)=>{if(isBlankMember(row[0])){blankRows.push(index);row[0]='Unassigned';}});
+            result.analysis!.includingBlanks={table:complete.table!,rowQuestions:complete.analysis!.rowQuestions,blankRows};
+        }
         sections.push({dimension, answer: result, score});
     }
     sections.sort((a,b)=>b.score-a.score || a.dimension.localeCompare(b.dimension));
@@ -372,12 +420,15 @@ async function runConsolidated(state: AnalysisState, config: ParameterConfig, me
 
 /** Only entered by an explicit Show transactions action, never by dimension discovery. */
 async function runTransactions(state: AnalysisState, config: ParameterConfig, measures: string[], load: (plan: ParameterPlan)=>Promise<QnaResponse>): Promise<QnaResponse> {
-    const fields=config.analysis?.published?.transactionFields || [];
-    if(!fields.length || fields.length>4 || new Set(fields).size!==fields.length || fields.some(name=>!config.fields.some(field=>field.name===name) || !config.options.includes(name)))
-        throw new Error("Choose one to four different available transaction fields in Explain & investigate settings.");
+    const summaryGroup=config.answerGroups?.find(g=>g.enabled&&g.kind==='field'&&g.name===state.summarizeBy);
+    const fields=state.summarizeBy ? summaryGroup?.members.filter(m=>!summaryGroup.hiddenMembers?.includes(m)) || [state.summarizeBy] : config.analysis?.published?.transactionFields || [];
+    if(!fields.length || fields.length>10 || new Set(fields).size!==fields.length || fields.some(name=>!config.fields.some(field=>field.name===name) || !config.options.includes(name)))
+        throw new Error("Choose one to ten different available transaction fields in Explain & investigate settings.");
     if(state.transactions==='comparison' && !state.comparison)throw new Error("This answer has no comparison period.");
     const periods=state.transactions==='comparison' ? [state.comparison!] : state.transactions==='both' && state.comparison ? [state.period,state.comparison] : [state.period];
+    let appliedRule: QnaResponse["transactionRule"];
     const rows:string[][]=[];
+    const transactionTables:Array<{period:string;table:QnaTable}>=[];
     for(const period of periods){
         const parsed=planParameterQuestion(periodQuestion(state.base,period),{...config,defaultMeasure:state.measure},measures);
         const filters=parsed.filters.slice();
@@ -386,12 +437,72 @@ async function runTransactions(state: AnalysisState, config: ParameterConfig, me
             if(!field)throw new Error("The selected dimension is no longer available.");
             filters.push(new BasicFilter({table:field.table,column:field.column},"In",selection.blank?[null as any]:selection.values.map(value=>field.type==='number'?Number(value):value)).toJSON());
         }
-        const answer=await load({...parsed,groups:fields,measures:[state.measure],filters,presentation:'table',rank:undefined,totalOnly:false,listOnly:false});
+        const scoped=applyGroupFilters({...parsed,filters},config,summaryGroup?.filters);
+        filters.splice(0,filters.length,...scoped.filters);
+        const detailPlan:ParameterPlan={...parsed,groups:fields,measures:[state.measure],filters,presentation:'table',rank:undefined,totalOnly:false,listOnly:false};
+        const resolved=state.summarizeBy ? {plan:detailPlan,decorate:(table:QnaTable)=>table,rule:undefined} : await resolveTransactionRule(detailPlan,config,measures,load,state.transactionRuleView);
+        appliedRule=resolved.rule?{...resolved.rule,reviewCount:(appliedRule?.reviewCount||0)+(resolved.rule.reviewCount||0)}:undefined;filters.splice(0,filters.length,...resolved.plan.filters);
+        const answer=await loadTransactionResult(resolved.plan,load,!!resolved.rule);
+        answer.table=resolved.decorate(answer.table!);
         if(!answer.table)throw new Error("Power BI did not return transaction details.");
         rows.push(...answer.table.rows.map(row=>[period,...row]));
+        let total=answer.table.modelTotals?.[fields.length];
+        let rawTotal=answer.table.modelRawTotals?.[fields.length] ?? null;
+        if(total===undefined){
+            const scalar=await load({...parsed,groups:[],measures:[state.measure],filters,presentation:'table',rank:undefined,totalOnly:true,listOnly:false});
+            rawTotal=scalar.table?.modelRawTotals?.at(-1) ?? scalar.table?.modelRawRows?.[0]?.at(-1) ?? null;
+            total=scalar.table?.modelTotals?.at(-1) ?? scalar.table?.rows[0]?.at(-1) ?? scalar.kpi?.value ?? '—';
+        }
+        const periodRows=answer.table.rows.map(row=>[period,...row]);
+        transactionTables.push({period,table:{...answer.table,summaryAdditiveMeasures:config.additiveMeasures?.filter(name=>!config.customKpis?.some(k=>k.name===name)),modelFormats:[undefined,...(answer.table.modelFormats||[])],summaryCards:config.analysis?.published?.summaryCards,clearing:config.analysis?.published?.clearing,document:config.analysis?.published?.document,drillScopes:[{question:periodQuestion(state.base,period),measure:state.measure,inheritedFilters:filters}],columns:['Period',...fields,state.measure],rows:periodRows,rowIndices:periodRows.map(()=>[]),
+            modelGroupValues:answer.table.modelGroupValues?.map(row=>[period,...row]),
+            modelTotals:['Grand Total',...fields.map(()=>''),total],
+            modelRawRows:answer.table.modelRawRows?.map(row=>[null,...row]),
+            modelRawTotals:[null,...fields.map(()=>null),rawTotal],
+            modelEvaluatedTotals:[false,...fields.map(()=>false),true],
+            analysisResult:true,analysisGroupCount:fields.length+1,modelSnapshot:true,
+            modelEditor:{rows:['Period',...fields],columns:[],measures:[state.measure],filters:[]}}});
     }
     const selectionText=state.selections.map(item=>`${item.field}: ${item.values.length>5?`${item.values.length} selected members`:item.values.map(value=>value||'Unassigned').join(', ')}`).join('; ');
-    return {modelQuery:true,text:`${state.measure} · ${periods.join(' versus ')}.${selectionText?` Selected: ${selectionText}.`:''} Details grouped by ${fields.join(', ')}. Include a unique transaction ID in settings to see individual entries.`,
-        table:{columns:['Period',...fields,state.measure],rows,rowIndices:rows.map(()=>[]),modelSnapshot:true,
+    const combined=state.summarizeBy && transactionTables.length===2 ? comparisonSummary(transactionTables,fields) : undefined;
+    return {modelQuery:true,transactionRule:appliedRule,transactionTables:combined ? undefined : transactionTables,text:`${state.measure} · ${periods.join(' versus ')}.${selectionText?` Selected: ${selectionText}.`:''} ${state.summarizeBy ? "Summary" : "Details"} grouped by ${fields.join(', ')}.${state.summarizeBy ? "" : " Include a unique transaction ID in settings to see individual entries."}`,
+        table:combined || {columns:['Period',...fields,state.measure],rows,rowIndices:rows.map(()=>[]),modelSnapshot:true,
             modelEditor:{rows:['Period',...fields],columns:[],measures:[state.measure],filters:[]}}};
+}
+
+/** Align comparison members without adding or discarding repeated model rows. */
+function comparisonSummary(sections:Array<{period:string;table:QnaTable}>, fields:string[]):QnaTable {
+    const count=fields.length, valueIndex=count+1;
+    const format=sections[0].table.modelFormats?.[count];
+    const members=new Map<string,{labels:string[];rows:Array<number|undefined>}>();
+    sections.forEach(({table},period)=>{
+        const occurrences=new Map<string,number>();
+        table.rows.forEach((row,index)=>{
+            const labels=row.slice(1,valueIndex), base=JSON.stringify(labels);
+            const occurrence=occurrences.get(base)||0;occurrences.set(base,occurrence+1);
+            const key=JSON.stringify([labels,occurrence]);
+            if(!members.has(key))members.set(key,{labels,rows:[]});
+            members.get(key)!.rows[period]=index;
+        });
+    });
+    const values=(indices:Array<number|undefined>,total=false)=>sections.map(({table},period)=>total ? table.modelRawTotals?.[valueIndex] ?? null : indices[period]===undefined ? null : table.modelRawRows?.[indices[period]!] ?.[valueIndex] ?? null);
+    const raw=(amounts:Array<number|null>)=>{
+        const [current,prior]=amounts;
+        const delta=current!==null && prior!==null ? current-prior : null;
+        return [...amounts,delta,delta===null || prior===null || prior===0 ? null : delta/Math.abs(prior)];
+    };
+    const cells=(labels:string[],indices:Array<number|undefined>,total=false)=>{
+        const amounts=raw(values(indices,total));
+        const displayed=sections.map(({table},period)=>total ? table.modelTotals?.[valueIndex] ?? '—' : indices[period]===undefined ? '—' : table.rows[indices[period]!][valueIndex]);
+        return [...labels,...displayed,amounts[2]===null?'—':formatPowerBiValue(amounts[2],format),amounts[3]===null?'—':(amounts[3]! *100).toFixed(2)+'%'];
+    };
+    const entries=[...members.values()];
+    return {drillScopes:sections.flatMap(s=>s.table.drillScopes || []),
+        modelSelections:entries.map(item=>sections.flatMap((s,i)=>item.rows[i]===undefined?[]:[s.table.modelSelections?.[item.rows[i]] || []]).find(selection=>selection.length) || []),
+        columns:[...fields,...sections.map(s=>s.period),'Variance','Variance %'],
+        rows:entries.map(item=>cells(item.labels,item.rows)),rowIndices:entries.map(()=>[]),
+        modelRawRows:entries.map(item=>[...fields.map(()=>null),...raw(values(item.rows))]),
+        modelTotals:cells(['Grand Total',...fields.slice(1).map(()=>'')],[],true),
+        modelRawTotals:[...fields.map(()=>null),...raw(values([],true))],
+        modelSnapshot:true,analysisResult:true,analysisGroupCount:count};
 }

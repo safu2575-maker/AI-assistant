@@ -1,0 +1,11 @@
+import {build} from 'esbuild';
+import {chromium} from 'playwright-core';
+import assert from 'node:assert/strict';
+const bundle=await build({stdin:{contents:`import {agingSettings} from './src/qna/agingSettings';window.editor=agingSettings(undefined,['Customer','Due','As Of'],['Balance']);document.body.append(window.editor.element);`,resolveDir:'..',loader:'ts'},bundle:true,write:false,platform:'browser'});
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+try{const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:bundle.outputFiles[0].text});await page.getByRole('button',{name:'Add aging setup',exact:true}).click();await page.getByLabel('Aging name',{exact:true}).fill('Customer');
+await page.evaluate(()=>{for(const [label,value] of [['Aging date field','Due'],['Outstanding amount measure','Balance'],['Default grouping field','Customer'],['Model as-of date field (optional)','As Of']]){const s=document.querySelector('select[aria-label="'+label+'"]');s.value=value;s.dispatchEvent(new Event('change'));}});
+await page.getByRole('button',{name:'Default as-of date',exact:true}).click();await page.getByLabel('Calendar year',{exact:true}).selectOption('2027');await page.getByLabel('Calendar year',{exact:true}).selectOption('2026');await page.getByLabel('Calendar month',{exact:true}).selectOption('8');await page.getByRole('button',{name:'2026-09-30',exact:true}).click();assert.equal(await page.locator('.askbics-calendar').isVisible(),false);assert.equal(await page.evaluate(()=>window.editor.validate()),true);assert.equal(await page.evaluate(()=>window.editor.read()[0].defaultDate),'2026-09-30');assert.equal(await page.evaluate(()=>window.editor.read()[0].buckets.length),8);await page.getByRole('button',{name:'Edit',exact:true}).click();assert.equal(await page.getByLabel('Aging name',{exact:true}).inputValue(),'Customer');await page.getByLabel('Bucket 3 min',{exact:true}).fill('30');assert.equal(await page.evaluate(()=>window.editor.validate()),false);assert.match(await page.getByRole('alert').innerText(),/gaps or overlaps/);console.log('Aging editor save, reopen and invalid boundary checks passed.');}finally{await browser.close();}
+
+
+

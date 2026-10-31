@@ -1,5 +1,48 @@
 /** Explanations shared by native controls and searchable settings pickers. */
 const help: Record<string, string> = {
+    "Enable document links": "Makes document numbers clickable in transaction tables. Opens lines with the same document number, company and fiscal year, without question, period or selected-category filters. Always filters remain applied.",
+    "Document number field": "Choose the accounting document number column. Include this column in transaction fields. Blank document numbers remain plain text.",
+    "Document fiscal year field": "Choose the document fiscal year to distinguish numbers reused across years. Include it in transaction fields.",
+    "Document amount measure": "Measure displayed for document lines and their model-calculated total. Question, period and transaction-rule filters do not restrict this lookup. Always filters remain applied.",
+    "Document detail columns": "Choose up to ten fields for the document popup when Use transaction columns is off.",
+    "Enable clearing links": "Makes nonblank clearing document numbers clickable in transaction details. Opens related items with the same clearing reference, company and clearing fiscal year; question, period and selected-category filters are omitted. Always filters remain applied.",
+    "Clearing document field": "Choose the column containing the clearing reference shared by related invoice and payment items. Include it in transaction columns. Blank references are not clickable.",
+    "Company code field": "Uses the clicked row's company to limit the lookup, so identical document references in different companies are not mixed. Include this field in transaction columns.",
+    "Clearing fiscal year field": "Uses the clicked row's clearing fiscal year to distinguish reused clearing numbers. Choose the clearing year, not automatically the invoice posting year, and include it in transaction columns.",
+    "Clearing amount measure": "The measure shown for related clearing items and their model-calculated total. Signed values are preserved; a clearing group is not assumed to total zero.",
+    "Use transaction columns": "Reuses your configured transaction columns in the details popup. Turn off to choose a separate set of detail columns.",
+    "Clearing detail columns": "Choose the columns displayed in the clearing popup when transaction columns are not reused. This changes the displayed detail, not the company, clearing year or existing filter scope.",
+    "Enable transaction rule": "Applies the saved rule when transaction details open. Ordinary answers do not use this rule. Turn off to show transaction details without this additional rule.",
+    "Transaction ID field": "Required for Conditions and confirmed offsetting pairs. Reference lookup does not need a Row ID. Choose a nonblank ID unique to each transaction line, and include it in Transaction fields. Document numbers can repeat across lines and are not necessarily unique.",
+    "Rule name": "A short name shown above the transaction table so users know which rule is active.",
+    "Rule type": "Conditions exclude rows using comparisons. Document matching checks reversal references against document numbers.",
+    "Matching method": "Reference lookup matches Rev With against Doc No, like VLOOKUP, without checking amounts. Confirmed offsetting pairs additionally checks both documents and their signed amounts.",
+    "Document number": "The column containing document numbers to search. Multiple transaction lines may share the same document number.",
+    "Rev With / reversal reference": "The column containing the referenced document number. Reference lookup excludes a row when this value exists in Document number within the current filtered scope.",
+    "Signed amount measure (additive)": "A measure that sums signed transaction amounts. Used only for confirmed offsetting pairs; do not use a ratio or ABS measure.",
+    "Matching scope fields": "Optional company, fiscal year or currency columns. Matches must have the same values in these fields, preventing unrelated documents with the same number from matching.",
+    "Condition editor": "Use Builder for simple comparisons, or Formula for nested AND/OR conditions. Both define which rows are excluded.",
+    "Match": "All conditions requires every condition to match (AND). Any condition requires at least one (OR).",
+    "Operator": "Choose how the value is compared: equals, differs, greater/less than, membership (IN), or blank (ISBLANK).",
+    "Field or measure": "Choose the value evaluated by the condition. Measures are evaluated at the configured transaction ID level.",
+    "KPI name": "The name users can enter in questions to request this calculated KPI.",
+    "KPI formula": "Calculates a KPI from measures. Each row and total recalculates the formula using its own filtered inputs.",
+    "KPI decimal places": "Controls displayed precision; does not change the underlying calculation.",
+    "Allowed values": "Select one or more values. Values in one field use OR; different filter fields use AND. Existing question and Always filters still apply.",
+    "Group name": "A name users can enter to request the fields or measures in this group together.",
+    "Group type": "Field groups add grouping columns. Measure groups add separate measure columns.",
+    "Synonyms (comma-separated)": "Alternative names users can type for this item. Separate names with commas.",
+    "Waterfall category": "The field or field group used to identify waterfall steps.",
+    "Waterfall measure": "The measure supplying the values for waterfall steps.",
+    "Positive movements": "Default colour for increasing waterfall movements; does not change their sign or value.",
+    "Negative movements": "Default colour for decreasing waterfall movements; does not change their sign or value.",
+    "Totals": "Default colour for waterfall total bars.",
+    "Category labels": "Controls how waterfall step names wrap or rotate to fit the chart.",
+    "Value labels": "Controls the display of amounts above waterfall bars.",
+    "Category order": "Financial order preserves the configured step sequence. Positive first orders movements by sign while respecting total boundaries.",
+    "Parameter table": "Advanced override for the bound Power BI field-parameter table. Prefer automatic detection.",
+    "Parameter label column": "The column containing the parameter display names, not the underlying model fields.",
+
     "Enable Explain & investigate": "Questions containing explain or variance analyse the business dimensions available to askBICS. Ordinary questions keep their existing behaviour.",
     "Show percentage of revenue for each period": "Adds a percentage for each period using Percentage of Revenue settings. The denominator keeps relevant business filters and replaces financial hierarchy filters.",
     "Hide unchanged members": "Hides members whose amounts are equal in both periods. Overall totals still include them. Changes from or to zero remain visible.",
@@ -26,12 +69,12 @@ const help: Record<string, string> = {
     "Use cardinality to choose table or matrix": "Chooses a layout based on how many distinct values each field contains. An explicit layout in the question takes priority.",
     "Order matrix hierarchy from low to high cardinality": "Places fields with fewer distinct values before more detailed fields when arranging a matrix automatically.",
     "Matrix threshold (%)": "Controls when distinct-value counts favour a matrix instead of a flat table.",
-    "Maximum column values": "Limits how many distinct values can become matrix columns. Zero removes this configured limit."
+    "Maximum column values": "Category fields with more than 12 distinct column values move to rows. Month and year fields stay in columns. All values are retained; this fixed readability rule also applies to requested column layouts."
 };
 export function settingsHelp(label: string): string | undefined {
     const name = label.trim().split(": ")[0];
     if (help[name]) return help[name];
-    if (/^Transaction field \d+$/.test(name)) return "Shown only in the transaction popup after Show transactions. Include a unique transaction ID to keep individual entries separate. Up to four fields are supported.";
+    if (/^Transaction field \d+$/.test(name)) return "Shown only in the transaction popup after Show transactions. Include a unique transaction ID to keep individual entries separate. Up to 10 fields are supported.";
     if (/^Include /.test(name)) return "Includes this business dimension in investigation. Untick to hide its section; ordinary questions and filters remain available.";
     if (/^Hierarchy level \d+$/.test(name)) return "Choose fields from parent to child, for example Group → Category → Tenant. Selecting a parent shows its children.";
     if (/^Revenue hierarchy child/.test(name)) return "Removes this accounting child restriction from the revenue denominator while preserving unrelated filters.";
@@ -53,3 +96,26 @@ export function settingsOptionHelp(value: string): string | undefined {
         "All members": "Shows every returned member rather than a Top list."
     } as Record<string, string>)[value] || (/^Top \d+$/.test(value) ? "Shows this many leading members at each level. Enable Others to include the remainder in one row." : undefined);
 }
+
+/** Help markers use the shared tooltip host and never activate their enclosing label. */
+export function installSettingsHelp(root:HTMLElement):()=>void {
+    const decorate=()=>{
+        for(const label of Array.from(root.querySelectorAll<HTMLElement>('label,[data-settings-help]'))){
+            if(label.querySelector('.askbics-settings-help-icon')||label.closest('.askbics-settings-select__popup'))continue;
+            const name=Array.from(label.childNodes).filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent||'').join(' ').trim();
+            if(!name)continue;
+            const control=label.querySelector<HTMLElement>('input,select,textarea');
+            const description=label.dataset.settingsHelp||settingsHelp(name)||control?.dataset.tooltip;
+            if(!description)continue;
+            const marker=document.createElement('span');marker.className='askbics-settings-help-icon';marker.textContent='?';marker.tabIndex=0;marker.setAttribute('role','note');marker.setAttribute('aria-label',name+': '+description);marker.dataset.tooltip=description;
+            marker.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();});
+            const text=Array.from(label.childNodes).find(n=>n.nodeType===Node.TEXT_NODE&&n.textContent?.trim());
+            if(text){const caption=document.createElement('span');caption.className='askbics-settings-help-caption';text.replaceWith(caption);caption.append(text,marker);}else label.append(marker);
+        }
+    };
+    decorate();
+    const observer=new MutationObserver(decorate);observer.observe(root,{childList:true,subtree:true});
+    return ()=>observer.disconnect();
+}
+
+

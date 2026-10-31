@@ -1,3 +1,4 @@
+import { fitVisualViewport } from './visualViewport';
 import powerbi from "powerbi-visuals-api";
 import { IFilterTarget } from "powerbi-models";
 import { applySelectionFilter, dateSelectionFilters, buildSelectionFilters, canCompactSelection, resolveFilterTarget, toggleSelection } from "./selectionFilter";
@@ -11,6 +12,7 @@ import { BasicFilter } from "powerbi-models";
 
 export class Visual implements powerbi.extensibility.visual.IVisual {
     private parameterTrial: FieldParameterTrial;
+    private readonly viewportFit?: ReturnType<typeof fitVisualViewport>;
     private readonly host: powerbi.extensibility.visual.IVisualHost;
     private readonly selection: powerbi.extensibility.ISelectionManager;
     private readonly engine: GlobalQnaEngine;
@@ -26,8 +28,18 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
     private loadingSegments = false;
     private selectedFilter?: { fieldName: string; values: string[]; activeFieldNames: string[]; backgroundFields?: string[]; filters?: Array<{ fieldName: string; values: string[] }>; contextLabel?: string };
 
+    private get selectionFilterHost(): Pick<powerbi.extensibility.visual.IVisualHost, "applyJsonFilter"> {
+        return { applyJsonFilter: (filter, objectName, propertyName, action) => {
+            if (objectName === "general" && propertyName === "filter" && action === powerbi.FilterAction.merge) {
+                this.parameterTrial.recordOutgoingSelection(Array.isArray(filter) ? filter : [filter]);
+            }
+            this.host.applyJsonFilter(filter, objectName, propertyName, action);
+        } };
+    }
+
     constructor(options?: powerbi.extensibility.visual.VisualConstructorOptions) {
         if (!options) throw new Error("Power BI visual constructor options are required.");
+        if (options.element.ownerDocument?.defaultView) this.viewportFit = fitVisualViewport(options.element);
         this.host = options.host;
         this.selection = this.host.createSelectionManager();
         options.element.classList.add("askbics-host");
@@ -38,6 +50,8 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         this.parameterTrial.onProgress = message => this.ui.setLoadingStage(message);
         this.ui.prepareQuestion = (question, refresh) => this.parameterTrial.prepareQuestion(question, refresh);
         this.ui.cancelQuestion = () => this.parameterTrial.cancelQuestion();
+        this.ui.transactionNavigation = enter => this.parameterTrial.transactionNavigation(enter);
+        this.ui.clearAndReload = () => this.parameterTrial.clearAndReload();
         this.ui.downloadPdf = async (content, filename) => {
             const service=this.host.downloadService;
             if (!service) return "This Power BI host does not provide the download service.";
@@ -55,7 +69,7 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
             ++this.selectionRevision; // Invalidate callbacks from an earlier row/cell click.
             this.selectedIndices = []; this.selectedFilter = undefined;
             this.engine.updateSelection([]);
-            applySelectionFilter(this.host, [], []);
+            applySelectionFilter(this.selectionFilterHost, [], []);
             void this.selection.clear().then(() => {}, () => {});
             this.persistState();
         };
@@ -69,14 +83,14 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
             this.selectedIndices = []; this.selectedFilter = undefined; this.engine.updateSelection([]);
             this.selection.clear().then(() => {
                 if (revision !== this.selectionRevision) return;
-                if (!first.length) { applySelectionFilter(this.host, [], []); this.ui.setFilterChips([]); this.persistState(); return; }
+                if (!first.length) { applySelectionFilter(this.selectionFilterHost, [], []); this.ui.setFilterChips([]); this.persistState(); return; }
                 const filters = first.map((part, index) => new BasicFilter(targetOf(part), 'In', [...new Set(normalized.map(row => row[index].value))]).toJSON());
                 const tuples = [...new Map(normalized.map(row => { const tuple = row.map(part => part.value); return [JSON.stringify(tuple), tuple]; })).values()];
                 const product = filters.reduce((count, filter) => count * filter.values.length, 1);
                 const rectangular = product === tuples.length;
                 const outputFilters = rectangular ? filters.flatMap((filter,index) => first[index].dateDay
                     ? dateSelectionFilters(filter.target as IFilterTarget, filter.values.map(String)) : [filter]) : filters;
-                applySelectionFilter(this.host, tuples.map((_, index) => index), outputFilters, tuples, !rectangular);
+                applySelectionFilter(this.selectionFilterHost, tuples.map((_, index) => index), outputFilters, tuples, !rectangular);
                 const labels = filters.map((filter,index) => first[index].dateDay
                     ? [...new Set(filter.values.map(value => new Date(String(value)).toLocaleDateString('en-US', {month:'long',year:'numeric',timeZone:'UTC'})))].join(' + ')
                     : filter.values.length <= 4 ? filter.values.join(', ') : filter.values.length + ' selected values');
@@ -85,6 +99,9 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
             });
         };
         this.ui.automaticGroupingEnabled = () => this.parameterTrial.automaticEnabled();
+        this.ui.exportBackupData = this.parameterTrial.exportBackupData;
+        this.ui.validateBackupData = this.parameterTrial.validateBackupData;
+        this.ui.importBackupData = this.parameterTrial.importBackupData;
         this.ui.mountDataSettings = container => this.parameterTrial.mountSettings(container);
         this.ui.mountTimeSettings = container => this.parameterTrial.mountTimeSettings(container);
         this.ui.timeSettings = () => this.parameterTrial.readTimeSetup();
@@ -95,13 +112,19 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         this.parameterTrial.defaultMeasure = () => this.engine.getLayoutSettings().defaultMeasure;
         this.parameterTrial.startup = () => this.engine.getLayoutSettings().startup;
         this.ui.onStartupChanged = () => this.parameterTrial.applyStartup();
+        this.parameterTrial.valueSynonyms = () => this.engine.getLayoutSettings().valueSynonyms;
+        this.parameterTrial.alwaysFilter = () => this.engine.getLayoutSettings().alwaysFilter;
         this.parameterTrial.revenue = () => this.engine.getLayoutSettings().revenue;
+        this.parameterTrial.answerGroups = () => this.engine.getLayoutSettings().answerGroups;
+        this.parameterTrial.customKpis = () => this.engine.getLayoutSettings().customKpis;
+        this.parameterTrial.aging = () => this.engine.getLayoutSettings().aging;
         this.parameterTrial.analysis = () => this.engine.getLayoutSettings().analysis;
         this.ui.analysisModelBinding = hierarchy => this.parameterTrial.analysisModelBinding(hierarchy);
         this.parameterTrial.additiveMeasures = () => this.engine.getLayoutSettings().additiveMeasures || [];
+        this.ui.availableFields = () => this.parameterTrial.availableFields();
         this.ui.groupingOptions = () => this.parameterTrial.groupingOptions();
         this.ui.valueOptions = () => this.parameterTrial.valueOptions();
-        this.ui.loadSuggestionValues = fields => this.parameterTrial.loadSuggestionValues(fields);
+        this.ui.loadSuggestionValues = (fields, explicit) => this.parameterTrial.loadSuggestionValues(fields, explicit);
         this.parameterTrial.onSuggestionValuesChanged = () => this.ui.refreshValueSuggestions();
         this.parameterTrial.groupAliases = () => {
             const settings = this.engine.getLayoutSettings();
@@ -116,6 +139,7 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
     }
 
     public update(options: powerbi.extensibility.visual.VisualUpdateOptions): void {
+        if(options.viewport)this.viewportFit?.update(options.viewport);
         // Persisted visual objects are not guaranteed to be attached to the
         // first data view in a multi-mapping update.
         options.dataViews?.forEach(view => this.parameterTrial.hydrate(view));
@@ -146,7 +170,7 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         }
         if (restoredUiState) this.ui.restoreState(restoredUiState);
         this.parameterTrial.runStartup();
-        if (hasMoreSegments && !this.parameterTrial.dataRequestsStopped && (!this.parameterTrial.startupLoading || this.parameterTrial.startupAcceptsSegments(dataView))) {
+        if (hasMoreSegments && this.parameterTrial.canFetchMoreData() && !this.parameterTrial.dataRequestsStopped && (!this.parameterTrial.startupLoading || this.parameterTrial.startupAcceptsSegments(dataView))) {
             if (!this.host.fetchMoreData(true)) this.parameterTrial.fail("Power BI could not load the complete query result. Narrow the grouping or filters; no complete answer is available.");
         } else if (hasIncomingDataView) this.restoringData = false;
         this.loadingSegments = hasMoreSegments;
@@ -156,7 +180,7 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         return { cards: [] };
     }
 
-    public destroy(): void { this.ui.cancelSelectionDispatch(); this.parameterTrial.destroy(); }
+    public destroy(): void { this.viewportFit?.destroy(); this.ui.cancelSelectionDispatch(); this.parameterTrial.destroy(); }
 
     private persistState = (): void => {
         const value = JSON.stringify({ ...this.ui.getState(), selectionFilter: this.selectedFilter });
@@ -254,11 +278,11 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         // hidden question filters and auto-date levels, without guessing targets.
         const hasCategoricalIdentities = categories.length > 0 && nextIndices.every((index) => categories.some((category) => !!category.identity?.[index]));
         if (hasCategoricalIdentities && !compactSemanticSelection) {
-            applySelectionFilter(this.host, [], []);
+            applySelectionFilter(this.selectionFilterHost, [], []);
             this.selection.clear().then(() => {
                 if (revision !== this.selectionRevision) return;
                 const tuples = nextIndices.map((rowIndex) => selectionParts.map((part) => rows[rowIndex][part.index] as string | number | boolean));
-                applySelectionFilter(this.host, nextIndices, semanticFilters.map((filter) => filter.toJSON()), tuples, true);
+                applySelectionFilter(this.selectionFilterHost, nextIndices, semanticFilters.map((filter) => filter.toJSON()), tuples, true);
                 applyState();
             });
             return;
@@ -268,11 +292,11 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
                 if (revision !== this.selectionRevision) return;
                 applyState();
                 const tuples = nextIndices.map((rowIndex) => selectionParts.map((part) => rows[rowIndex][part.index] as string | number | boolean));
-                applySelectionFilter(this.host, nextIndices, semanticFilters.map((filter) => filter.toJSON()), tuples, !compactSemanticSelection);
+                applySelectionFilter(this.selectionFilterHost, nextIndices, semanticFilters.map((filter) => filter.toJSON()), tuples, !compactSemanticSelection);
             });
             return;
         }
-        applySelectionFilter(this.host, [], []);
+        applySelectionFilter(this.selectionFilterHost, [], []);
         (identities.length ? this.selection.select(identities, false) : this.selection.clear()).then(applyState);
     };
 

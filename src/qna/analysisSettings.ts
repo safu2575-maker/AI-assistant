@@ -1,3 +1,7 @@
+import { summaryCardSettings } from "./summaryCardSettings";
+import { documentSettings } from './documentSettings';
+import { clearingSettings } from "./clearingSettings";
+import { transactionRuleSettings } from "./transactionRuleSettings";
 import { AnalysisDefinition, AnalysisSettings, AnalysisState, analysisAutomaticReason } from "../analysisTemplates";
 import { settingsSelect } from "./settingsSelect";
 import { TimeSetup } from "../timeSetup";
@@ -33,8 +37,23 @@ export function analysisSettings(current: AnalysisSettings | undefined, fields: 
     const revenue=check("Show percentage of revenue for each period",initial?.revenuePercent??false);
     const unchanged=check("Hide unchanged members",initial?.hideUnchanged??false);
     const favourable=pick("Favourable movement",[["neutral","Neutral"],["increase","An increase is favourable"],["decrease","A decrease is favourable"]],initial?.favourable||"neutral");
-    const transactionHelp=document.createElement("p");transactionHelp.textContent="Transaction details (optional). Choose up to four fields, including a unique transaction ID for individual entries. These fields are queried only when you right-click a result and choose Show transactions; they are excluded from automatic dimension sections.";advanced.append(transactionHelp);
-    const transactionFields=Array.from({length:4},(_,i)=>pick(`Transaction field ${i+1}`,[["","None"],...fields.map(name=>[name,name] as [string,string])],initial?.transactionFields?.[i]||"",true));
+    const transactions=document.createElement("section");transactions.className="askbics-transaction-settings";advanced.append(transactions);
+    const transactionHelp=document.createElement("p");transactionHelp.textContent="Transaction details (optional). Choose up to 10 fields, including a unique transaction ID for individual entries. These fields are queried only when you right-click a result and choose Show transactions; they are excluded from automatic dimension sections.";transactions.append(transactionHelp);
+    const transactionList=document.createElement('div');transactionList.className='askbics-transaction-fields';transactions.append(transactionList);
+    const addTransaction=document.createElement('button');addTransaction.type='button';addTransaction.className='askbics-settings-action';addTransaction.textContent='Add transaction field';transactions.append(addTransaction);
+    let transactionFields:HTMLSelectElement[]=[];
+    const renderTransactions=(values:string[])=>{
+        transactionList.replaceChildren();transactionFields=[];
+        values.forEach((value,index)=>{
+            const row=document.createElement('div');row.className='askbics-transaction-field-row';transactionList.append(row);
+            const previous=target;target=row;const field=pick(`Transaction field ${index+1}`,[["","None"],...fields.map(name=>[name,name] as [string,string])],value,true);target=previous;
+            transactionFields.push(field);field.addEventListener('change',refresh);
+            if(values.length>1){const remove=document.createElement('button');remove.type='button';remove.className='askbics-settings-action';remove.textContent='Remove';remove.setAttribute('aria-label',`Remove transaction field ${index+1}`);remove.onclick=()=>{renderTransactions(transactionFields.filter((_,i)=>i!==index).map(item=>item.value));refresh();addTransaction.focus();};row.append(remove);}
+        });
+        addTransaction.disabled=values.length>=10;addTransaction.textContent=values.length>=10?'Maximum 10 transaction fields':'Add transaction field';
+    };
+    addTransaction.onclick=()=>{if(transactionFields.length>=10)return;renderTransactions([...transactionFields.map(field=>field.value),'']);transactionList.lastElementChild?.querySelector<HTMLButtonElement>('.askbics-settings-select__trigger')?.focus();};
+    const cardsEditor=summaryCardSettings(initial?.summaryCards,fields,measures);transactions.append(cardsEditor.element);const ruleEditor=transactionRuleSettings(initial?.transactionRule,fields,measures,()=>transactionFields.map(f=>f.value).filter(Boolean));transactions.append(ruleEditor.element);const clearingEditor=clearingSettings(initial?.clearing,fields,measures,()=>transactionFields.map(f=>f.value).filter(Boolean));transactions.append(clearingEditor.element);const documentEditor=documentSettings(initial?.document,fields,measures,()=>transactionFields.map(f=>f.value).filter(Boolean));transactions.append(documentEditor.element);
     const exclusionLabel=document.createElement("p");exclusionLabel.textContent="Time fields are used to select periods and are excluded from breakdown sections automatically. Transaction fields remain available in transaction details.";advanced.append(exclusionLabel);
     const autoTitle=document.createElement("strong");autoTitle.textContent="Automatically excluded";
     const chips=document.createElement("div");chips.className="askbics-analysis-exclusions";advanced.append(autoTitle,chips);
@@ -50,9 +69,9 @@ export function analysisSettings(current: AnalysisSettings | undefined, fields: 
         });
         if(!chips.childElementCount)chips.textContent="None";
     };
-    transactionFields.forEach(field=>field.addEventListener('change',refresh));refresh();
+    renderTransactions(initial?.transactionFields?.length?initial.transactionFields.slice(0,10):['']);refresh();
     return {element,refresh,read:():AnalysisSettings=>{
-        const definition:AnalysisDefinition={consolidated:true,measure:measure.value,hierarchy:[],
+        const definition:AnalysisDefinition={summaryCards:cardsEditor.read(),document:documentEditor.read(),clearing:clearingEditor.read(),transactionRule:ruleEditor.read(),consolidated:true,measure:measure.value,hierarchy:[],
             transactionFields:[...new Set(transactionFields.map(field=>field.value).filter(Boolean))],
             excludedDimensions:included.filter(item=>!item.input.checked).map(item=>item.name),
             breakdownKeywords:initial?.breakdownKeywords||["explain","breakdown"],varianceKeywords:initial?.varianceKeywords||["variance","var","difference","change"],

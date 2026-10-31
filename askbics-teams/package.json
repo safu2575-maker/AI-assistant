@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "node scripts/build-visual.mjs && tsc -p tsconfig.json && tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler --skipLibCheck app/visual-client.ts app/model-service.ts",
-    "test": "npm run build && node dist/test/pilot.test.js && node dist/test/suggestions.test.js && node --test dist/test/connections.test.js dist/test/selected-model.test.js dist/test/remembered-session.test.js test/visual.test.mjs",
+    "test": "npm run build && node dist/test/pilot.test.js && node dist/test/suggestions.test.js && node --test dist/test/connections.test.js dist/test/selected-model.test.js dist/test/remembered-session.test.js test/visual.test.mjs test/custom-kpis.mjs test/cash-flow-model.mjs",
     "demo": "npm run build && node dist/src/demo.js",
     "start": "node --env-file=.env dist/src/teams.js",
     "prepare:manifest": "npm run build && node --env-file=.env dist/src/prepare-manifest.js",

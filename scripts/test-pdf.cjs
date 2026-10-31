@@ -20,5 +20,8 @@ global.document={createElement(){return {getContext(){const canvas=this;return {
  assert(pw<ph && lw>lh,'PDF page orientation matches the selection');
  assert(portrait.pages.length>1 && drawn.includes('Portrait tenant 149'),'portrait pagination retains all rows');
  await assert.rejects(createPdfReport({title:'empty'}),/no result/);
+ let delivered=0;
+ await assert.rejects(createPdfReport({title:'Cancel large export',columns:['ID','Amount'],rows:Array.from({length:1000},(_,i)=>[String(i),'100'])},()=>{delivered++;},()=>delivered>0),/closed/);
+ assert.equal(delivered,1,'closing stops generation after the first delivered page');
  console.log('PDF pagination and document generation passed.');
 })().catch(error=>{console.error(error);process.exitCode=1});

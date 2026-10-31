@@ -1,3 +1,4 @@
+import { settingsPopup } from './settingsPopup';
 /** Editable value picker styled with the shared settings dropdown. */
 export function settingsCombobox(input: HTMLInputElement) {
     const host = document.createElement('div'); host.className = 'askbics-settings-select askbics-settings-combobox';
@@ -8,6 +9,7 @@ export function settingsCombobox(input: HTMLInputElement) {
     popup.append(list); host.append(toggle, popup);
     let items: string[] = [], active = -1;
     const close = () => { popup.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); active = -1; };
+ settingsPopup(host,close);
     const draw = (all = false) => {
         if (input.disabled) return;
         list.replaceChildren(); active = -1; input.removeAttribute('aria-activedescendant');

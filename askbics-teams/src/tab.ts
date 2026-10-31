@@ -224,13 +224,18 @@ export function mountTab(server: express.Express, config: Config, origin: string
     if (req.body.datasetId && req.body.datasetId !== s.model.datasetId) { res.status(409).json({ error: 'The selected model changed. Reopen the Ask tab.' }); return; }
     if ((s.queued || 0) >= 24) { res.status(429).json({ error: 'Too many pending questions. Wait for current answers.' }); return; }
     s.queued = (s.queued || 0) + 1;
+    let started=false;
+    const disconnected=()=>{if(started&&!res.writableEnded)s.visual?.cancel();};
+    res.on('close',disconnected);
     const operation = (s.queue || Promise.resolve()).then(async () => {
+      if(res.destroyed)throw new UserError('Query cancelled.');
+      started=true;
       if (s.expires <= Date.now() || ![...sessions.values()].includes(s)) throw new UserError('Sign in again to continue.');
       s.visual ||= visualSession(s.model, s.token, fetcher);
       return path === 'dictionary' ? s.visual.dictionary(req.body.field) : s.visual.answer(req.body.question, req.body.settings, req.body.time, req.body.refresh === true, req.body.selections);
     });
     s.queue = operation.catch(() => {});
-    try { res.json(await operation); } catch (e) { failure(res, e); } finally { s.queued = (s.queued || 1) - 1; }
+    try { res.json(await operation); } catch (e) { failure(res, e); } finally { started=false;res.off('close',disconnected);s.queued = (s.queued || 1) - 1; }
   });
   server.post('/ask/api/values', async (req, res) => {
     const s = authorised(req, res); if (!s) return;

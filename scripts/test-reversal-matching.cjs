@@ -1,0 +1,35 @@
+const assert=require('node:assert/strict');
+const {matchReversalPairs}=require('../.tmp/test/reversalMatching');
+const row=(id,document,reversal,amount,partitions=['A',2026,'QAR'])=>({id,document,reversal,amount,partitions});
+let r=matchReversalPairs([row('1','D100',null,1000),row('2','D200','D100',-1000),row('3','D300',null,20)]);
+assert.deepEqual([...r.excluded].sort(),['1','2']);assert.equal(r.review.size,0);
+r=matchReversalPairs([row('1','D100',null,1000),row('2','D200','D100',-300)]);assert.equal(r.excluded.size,0);assert.equal(r.review.size,2);
+r=matchReversalPairs([row('2','D200','D100',-1000)]);assert.equal(r.excluded.size,0);assert.match(r.review.get('2'),/current period/);
+r=matchReversalPairs([row('1','D100',null,1000),row('2','D200','D100',-1000,['B',2026,'QAR'])]);assert.equal(r.excluded.size,0);
+r=matchReversalPairs([row('1','001',null,1000),row('2','D200','1',-1000)]);assert.equal(r.excluded.size,0,'leading zeros preserved');
+r=matchReversalPairs([row('1','D1',null,1000),row('2','D2','D1',-1000),row('3','D3','D1',-1000)]);assert.equal(r.excluded.size,0);assert.equal(r.review.size,3);
+r=matchReversalPairs([row('1','D1',null,1000),row('2','D2','D1',-1000),row('3','D3','D2',1000)]);assert.equal(r.excluded.size,0);
+r=matchReversalPairs([row('1','D1',null,600),row('2','D1',null,400),row('3','D2','D1',-1000)]);assert.equal(r.excluded.size,3,'multi-line complete documents');
+r=matchReversalPairs([row('1','D1',null,null),row('2','D2','D1',-1000)]);assert.equal(r.excluded.size,0);
+r=matchReversalPairs([row('1','D1',null,1000),row('2','D2','D1',1000)]);assert.equal(r.excluded.size,0,'same signs never pair');
+r=matchReversalPairs([row('1','D1',null,0),row('2','D2','D1',0)]);assert.equal(r.excluded.size,0,'zero amounts insufficient confirmation');
+r=matchReversalPairs([row('1','D1',null,.1+.2),row('2','D2','D1',-.3)]);assert.equal(r.excluded.size,2,'floating-point noise only');
+const {answerTransactions,transactionQuestion}=require('../.tmp/test/answerTransactions');
+const fields=['ID','Document','Reversed','Company'];
+const rule={name:'Reversals',keyField:'ID',formula:'',enabled:true,reversal:{documentField:'Document',reversalField:'Reversed',amountMeasure:'Amount',partitionFields:['Company']}};
+const config={table:'P',column:'P',enabled:true,options:fields,fields:fields.map(name=>({name,table:'T',column:name})),analysis:{draft:{transactionFields:['ID'],transactionRule:rule}}};
+const data=[{ID:'1',Document:'D1',Reversed:null,Company:'A',Amount:1000},{ID:'2',Document:'D2',Reversed:'D1',Company:'A',Amount:-1000},{ID:'3',Document:'D3',Reversed:'Missing',Company:'A',Amount:-40},{ID:'4',Document:'D4',Reversed:null,Company:'A',Amount:100}];
+const load=async plan=>{let selected=data;for(const f of plan.filters)if(f.target.column==='ID')selected=selected.filter(r=>f.values.includes(r.ID));const rows=plan.groups.length?selected.map(r=>[...plan.groups.map(n=>r[n]),...plan.measures.map(n=>r[n])]):[[selected.reduce((s,r)=>s+r.Amount,0)]];return {text:'',table:{columns:[...plan.groups,...plan.measures],rows:rows.map(r=>r.map(v=>String(v??'—'))),rowIndices:rows.map(()=>[]),modelGroupValues:rows.map(r=>r.slice(0,plan.groups.length)),modelRawRows:rows.map(r=>r.map(v=>typeof v==='number'?v:null)),modelResultComplete:true}};};
+(async()=>{for(const [view,ids,total] of [['included',['3','4'],'60'],['excluded',['1','2'],'0'],['all',['1','2','3','4'],'60']]){const a=await answerTransactions(transactionQuestion([{question:'Show Amount',transactionRuleView:view}]),config,['Amount'],load);assert.deepEqual(a.table.rows.map(r=>r[0]),ids);assert.equal(a.table.modelTotals.at(-1),total);assert(a.transactionRule.reversal);assert.equal(a.transactionRule.reviewCount,1);if(view!=='excluded')assert(Object.values(a.table.transactionReviewRows).some(v=>v.includes('not found')));}
+console.log('Reversal matching: full/partial/missing/multiple/chained pairs, scope isolation, leading zeros, line aggregation, blanks, signs and three model-filtered views passed.');})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{
+ const {resolveTransactionRule,loadTransactionResult}=require('../.tmp/test/transactionRules');
+ let calls=0;
+ const probe=async plan=>{calls++;return {text:'',table:{columns:[...plan.groups,...plan.measures],rows:[['1','D1','—','A','1000']],rowIndices:[[]],modelGroupValues:[['1','D1',null,'A']],modelRawRows:[[null,null,null,null,1000]],modelResultComplete:true}};};
+ const resolved=await resolveTransactionRule({groups:['ID'],measures:['Amount'],filters:[],summary:[]},config,['Amount'],probe,'excluded');
+ assert.equal(resolved.plan.transactionRuleEmpty,true);
+ assert.equal(resolved.plan.filters.length,0,'do not construct empty IN');
+ const result=await loadTransactionResult(resolved.plan,async()=>{throw new Error('Empty views must not query the host');},true);
+ assert.deepEqual(result.table.rows,[]);assert.equal(calls,1);
+ assert.equal(result.table.modelTotals.at(-1),'—','do not invent a model total');
+})().catch(e=>{console.error(e);process.exitCode=1;});

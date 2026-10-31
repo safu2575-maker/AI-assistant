@@ -1,3 +1,13 @@
+import { outlineModelRows } from "./modelOutline";
+import { ModelWorkQueue } from "./modelWorkQueue";
+import { setupCatalog } from './qna/setupCatalog';
+import { AnswerGroup, expandAnswerGroups, validateAnswerGroups } from "./answerGroups";
+import { answerTransactions } from "./answerTransactions";
+import { answerCashFlow } from "./cashFlowQuery";
+import { answerAging, AgingSetup } from "./aging";
+import { CustomKpi, compileKpis, customKpiRequest } from "./customKpis";
+import { resolveValueSynonyms, ValueSynonym } from "./valueSynonyms";
+import { applyAlwaysFilter, AlwaysFilter } from "./alwaysFilter";
 import { revenueQuestion, revenueRequest } from './revenue';
 import { analysisBinding, planAnalysis, runAnalysis } from "./analysisTemplates";
 import { visualBuild } from "./buildInfo";
@@ -7,7 +17,7 @@ import { compareTimeLabels, timeFieldOrder } from "./qna/timeLayout";
 import { TimeSetup, normalizeMonthPeriods, recognizedTimeTerms, calendarMonths, monthIndexLabel } from "./timeSetup";
 import { settingsSelect } from "./qna/settingsSelect";
 import powerbi from "powerbi-visuals-api";
-import { discoverParameter, parameterMetadataColumns } from "./parameterDiscovery";
+import { discoverParameter, discoverParameters, parameterMetadataColumns } from "./parameterDiscovery";
 import { modelHierarchy } from "./modelFeatures";
 import { readModelMatrix } from "./modelMatrix";
 import { pivotModelTable } from "./modelPivot";
@@ -39,13 +49,32 @@ export class FieldParameterTrial {
     private groupingChoices: HTMLElement;
     private hydrated = false;
     private autoDetected = false;
+    private bindingIssue = "";
+    private activeFieldScope?: Set<string>;
+    private confirmedFieldSource = "";
+    private refreshSetupCatalog?: () => void;
+    private detectionToolbar?: HTMLElement;
     private setupSummary: HTMLElement;
     private savedConfiguration = "";
     private recoveredEmptyMeasureFilter = false;
     private hasParameterContext = false;
     private latest?: powerbi.DataView;
+    private outgoingSelectionBatches: string[][] = [];
+
+    public recordOutgoingSelection(filters: powerbi.IFilter[]): void {
+        const signatures = filters.filter(filter => !!(filter as IFilter)?.target).map(filterSignature);
+        // Public echoes can arrive after removal, without general.filter metadata.
+        this.outgoingSelectionBatches.push(signatures);
+        if (this.outgoingSelectionBatches.length > 4) this.outgoingSelectionBatches.shift();
+    }
+
     private latestFilters: powerbi.IFilter[] = [];
-    private measures: string[] = [];
+    private nativeMeasures: string[] = [];
+    private get measures(): string[] { return [...this.nativeMeasures,...(this.customKpis?.()||[]).filter(k=>k.enabled).map(k=>k.name)]; }
+    private set measures(names:string[]) { this.nativeMeasures=names; }
+    public answerGroups?: () => AnswerGroup[] | undefined;
+    public customKpis?: () => CustomKpi[] | undefined;
+    public aging?: () => AgingSetup[] | undefined;
     private directMeasures: string[] = [];
     private measureBindingObserved = false;
     private hasMeasureParameter = false;
@@ -53,19 +82,55 @@ export class FieldParameterTrial {
     public startupAcceptsSegments(view: powerbi.DataView): boolean { const table = view.table || categoricalAsTable(view.categorical) || readModelMatrix(view.matrix)?.table; return sameGrouping((table?.columns || []).filter(column => !column.isMeasure && !column.roles?.measures).map(column => column.displayName), this.startup?.()?.fields || []); }
     public startup?: () => { enabled: boolean; fields: string[]; measure: string } | undefined;
     private startupNeeded = true;
+    private boundedCashFlow = false;
+    public canFetchMoreData(): boolean { return !(this.pending ? this.pending.plan?.cashFlowRowLimit : this.boundedCashFlow) && (!this.settingsSnapshot || !!this.pending); }
     public runStartup = (): void => {
         const setup = this.startup?.();
-        if (!this.startupNeeded || !setup?.enabled || this.pending || this.loadingSuggestionValues || !this.latest || !this.automaticEnabled()) return;
+        if (this.settingsSnapshot || !this.startupNeeded || !setup?.enabled || this.pending || this.loadingSuggestionValues || !this.latest || !this.automaticEnabled()) return;
         this.startupNeeded = false;
         try {
             const config = this.readConfig();
             if (!this.hasParameterContext) throw new Error("Startup selection requires a field parameter. Directly bound fields are controlled by Power BI.");
             if (!setup.fields.length || setup.fields.length > 3 || new Set(setup.fields).size !== setup.fields.length || setup.fields.some(name => !config.options.includes(name)) || !this.measureOptions().includes(setup.measure)) throw new Error("Choose 1–3 available startup fields and one measure in Startup loading.");
             this.startupLoading = true;
-            void this.requestBase({ groups: setup.fields, measures: [setup.measure], totalOnly: !setup.fields.length, filters: [], summary: [] }, config).catch(error => { this.status.textContent = String(error.message || error); }).finally(() => { this.startupLoading = false; });
+            void this.request({ groups: setup.fields, measures: [setup.measure], totalOnly: !setup.fields.length, filters: [], summary: [] }, config).catch(error => { this.status.textContent = String(error.message || error); }).finally(() => { this.startupLoading = false; });
         } catch (error) { this.status.textContent = String(error); }
     };
     public applyStartup = (): void => { this.startupNeeded = true; this.runStartup(); };
+    private resetFiltersOnRequest = false;
+    private discardSavedValues = false;
+    public clearAndReload = async (): Promise<string> => {
+        this.cancelQuestion();
+        this.queryCache.clear(); this.completed = undefined; this.latest = undefined;
+        // Clear dictionaries, not the schema already confirmed by Power BI.
+        this.learnedFields.forEach((field,name)=>this.learnedFields.set(name,{...field,values:[]}));
+        this.suggestionFieldsLoaded.clear(); this.discardSavedValues = true;
+        this.startupNeeded = false; this.onDataContextChanged?.();
+        const setup = this.startup?.();
+        if (!setup?.enabled || !this.automaticEnabled()) {
+            this.appliedFilters = [];
+            this.host.applyJsonFilter(null as unknown as IFilter, "parameterTrial", "filter", powerbi.FilterAction.remove);
+            this.host.refreshHostData();
+            return "Cache cleared. Fresh Power BI data requested.";
+        }
+        this.resetFiltersOnRequest = true;
+        try {
+            const config = this.readConfig();
+            const missing = setup.fields.filter(name => !config.options.includes(name));
+            if (!this.measureOptions().includes(setup.measure)) missing.push(setup.measure);
+            if (missing.length) throw new Error("Update Startup loading mappings: " + missing.join(", "));
+            if (!setup.fields.length || setup.fields.length > 3 || new Set(setup.fields).size !== setup.fields.length) throw new Error("Choose 1–3 different fields in Startup loading.");
+            this.startupLoading = true;
+            await this.request({groups:setup.fields, measures:[setup.measure], filters:[], summary:[]}, config, true);
+            return "Ready—startup data reloaded.";
+        } catch (error) {
+            if (!this.startupLoading) {
+                this.appliedFilters = [];
+                this.host.applyJsonFilter(null as unknown as IFilter, "parameterTrial", "filter", powerbi.FilterAction.remove);
+            }
+            throw error;
+        } finally { this.startupLoading = false; this.resetFiltersOnRequest = false; }
+    };
     private fieldOnlyBinding = false;
     private learnedFields = new Map<string, ModelField>();
     private suggestionFieldsLoaded = new Set<string>();
@@ -74,8 +139,9 @@ export class FieldParameterTrial {
     public onSuggestionValuesChanged?: () => void;
     private suggestionLoadRevision = 0;
     /** Load dictionaries in the current user's model context, never persist row values. */
-    public async loadSuggestionValues(fields: string[]): Promise<void> {
-        if (!this.automaticEnabled() || !this.latest || this.pending || this.loadingSuggestionValues || this.dataRequestsStopped) return;
+    public async loadSuggestionValues(fields: string[], explicit = false): Promise<void> {
+        if (!this.automaticEnabled() || !this.latest || this.pending || this.loadingSuggestionValues || (this.dataRequestsStopped && !explicit)) return;
+        if (explicit) this.dataRequestsStopped = false;
         const config = this.readConfig();
         const missing = fields.filter(name => config.options.includes(name) && !this.suggestionFieldsLoaded.has(name));
         if (!missing.length) return;
@@ -124,7 +190,7 @@ export class FieldParameterTrial {
     private requestConfig?: ParameterConfig;
     private waitingReason = "Power BI has not delivered an updated data view.";
     private appliedFilters: IFilter[] = [];
-    private pending?: { plan: ParameterPlan; filters: IFilter[]; clearing?: boolean; restoringSuggestions?: boolean; resolve: (response: QnaResponse) => void; reject: (error: Error) => void };
+    private pending?: { plan: ParameterPlan; filters: IFilter[]; clearing?: boolean; resetAcknowledged?: boolean; restoringSuggestions?: boolean; resolve: (response: QnaResponse) => void; reject: (error: Error) => void };
     private timer?: ReturnType<typeof setTimeout>;
     private recoveryTimer?: ReturnType<typeof setTimeout>;
     private recoveredRequest = false;
@@ -138,7 +204,24 @@ export class FieldParameterTrial {
         this.diagnostics.push({ time: new Date().toISOString(), event, ...details });
         if (this.diagnostics.length > 50) this.diagnostics.shift();
     }
-    public cancelQuestion = (): void => { ++this.questionRevision; this.dataRequestsStopped = true; this.stopSuggestionLoading(); this.cancel(); };
+    public cancelQuestion = (): void => { this.modelWork.invalidate(); ++this.questionRevision; this.dataRequestsStopped = true; this.stopSuggestionLoading(); this.cancel(); };
+    private transactionContexts:Array<{filters:IFilter[];plan:ParameterPlan}>=[];
+    public transactionNavigation = (enter:boolean):void => {
+        if(enter){
+            const table=this.latest?.table||categoricalAsTable(this.latest?.categorical)||readModelMatrix(this.latest?.matrix)?.table;
+            this.transactionContexts.push({filters:this.appliedFilters.slice(),plan:{groups:(table?.columns||[]).filter(c=>!c.isMeasure&&!c.roles?.measures).map(c=>c.displayName),measures:(table?.columns||[]).filter(c=>c.isMeasure||c.roles?.measures).map(c=>c.displayName),filters:[],summary:[]}});
+            return;
+        }
+        const previous=this.transactionContexts.pop();if(!previous)return;
+        this.cancelQuestion();
+        if(JSON.stringify(previous.filters)===JSON.stringify(this.appliedFilters))return;
+        if(!previous.filters.length){this.appliedFilters=[];this.host.applyJsonFilter(null as unknown as IFilter,"parameterTrial","filter",powerbi.FilterAction.remove);return;}
+        // Restore the parent's owned scope through the same acknowledged reset
+        // protocol as suggestion loading. Report/page filters are never removed.
+        this.pending={plan:previous.plan,filters:previous.filters,restoringSuggestions:true,resolve:()=>{},reject:()=>{}};
+        this.timer=setTimeout(()=>this.fail("Could not restore the answer filters after leaving transactions."),60000);
+        try{this.clearPendingFilters();}catch(error){this.fail(String(error));}
+    };
     public onDataContextChanged?: () => void;
     public onProgress?: (message: string) => void;
     private queryCache = new Map<string, powerbi.DataView>();
@@ -149,14 +232,17 @@ export class FieldParameterTrial {
         if (this.uiStateWrites.size > 8) this.uiStateWrites.delete(this.uiStateWrites.keys().next().value!);
     }
     private queryKey(plan: ParameterPlan, config: ParameterConfig): string {
-        return JSON.stringify({ groups: [...plan.groups].sort(), measures: [...plan.measures].sort(), filters: parameterFilters(plan, config).map(filterSignature).sort(), schema: config.fields.map(field => ({ name: field.name, table: field.table, column: field.column, type: field.type })) });
+        return JSON.stringify({ cashFlowRowLimit:plan.cashFlowRowLimit, groups: [...plan.groups].sort(), measures: [...plan.measures].sort(), filters: parameterFilters(plan, config).map(filterSignature).sort(), schema: config.fields.map(field => ({ name: field.name, table: field.table, column: field.column, type: field.type })) });
     }
     private rememberQuery(plan: ParameterPlan, config: ParameterConfig, view: powerbi.DataView): void {
+        if(plan.cashFlowRowLimit){const table=view.table||categoricalAsTable(view.categorical)||readModelMatrix(view.matrix)?.table;if(table){const truncated=!!view.metadata.segment||(table.rows?.length||0)>plan.cashFlowRowLimit;view={metadata:{...view.metadata,...(truncated?{segment:{}}:{})},table:{...table,rows:(table.rows||[]).slice(0,plan.cashFlowRowLimit)}};}}
         const key = this.queryKey(plan, config);
         this.queryCache.delete(key); this.queryCache.set(key, view);
-        if (this.queryCache.size > 24) this.queryCache.delete(this.queryCache.keys().next().value!);
+        if (this.queryCache.size > (plan.cashFlowRowLimit ? 8 : 24)) this.queryCache.delete(this.queryCache.keys().next().value!);
     }
     private completed?: { question: string; config: string; view: powerbi.DataView | undefined; response: QnaResponse };
+    private automaticPreference?: boolean;
+    private saveAutomaticPreference(): void { this.automaticPreference=this.automatic.checked; this.host.persistProperties({merge:[{objectName:"parameterTrial",selector:null as unknown as powerbi.data.Selector,properties:{automaticEnabled:this.automatic.checked}}]}); }
     public automaticEnabled = (): boolean => this.automatic.checked && this.hydrated;
     private settingsSnapshot?: { values: string[]; automatic: boolean; autoDetected: boolean; hydrated: boolean; summary: string | null };
     private settingsInputs(): Array<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement> { return [this.table, this.column, this.options, this.measureTable, this.measureColumn, this.measureLabels, this.mappings, ...Object.values(this.timeSelectors), this.timeOrder, this.timeYearStart]; }
@@ -172,27 +258,81 @@ export class FieldParameterTrial {
     };
     public saveSettings = (): boolean => {
         const snapshot = this.settingsSnapshot;
+        if (!this.hydrated && !this.table.value.trim() && !this.column.value.trim() && snapshot && JSON.stringify(snapshot.values)===JSON.stringify(this.captureSettings().values)) {
+            this.saveAutomaticPreference();this.settingsSnapshot=undefined;
+            this.status.textContent=this.automatic.checked?'Automatic setup saved as On. Waiting for field-parameter metadata before querying.':'Automatic setup saved as Off.';return true;
+        }
         if (snapshot && JSON.stringify(snapshot) === JSON.stringify(this.captureSettings())) { this.settingsSnapshot = undefined; return true; }
         try {
             const config = this.readConfig();
+            if(config.measureParameter)this.nativeMeasures=[...new Set([...this.directMeasures,...config.measureParameter.options])];
             this.stopSuggestionLoading(); this.cancel(); this.suggestionFieldsLoaded.clear(); this.hydrated = true; this.fillOptions(config);
             this.settingsSnapshot = undefined; this.persistConfig();
             this.status.textContent = "Configuration saved."; return true;
         } catch (error) { this.settingsSnapshot = snapshot; this.status.textContent = String((error as Error).message); return false; }
     };
-    public mountSettings = (container: HTMLElement): void => { this.cancelSettings(); try { this.refreshTimeFields(this.mappedFields()); } catch { /* Allow invalid setup to be edited. */ } this.settingsSnapshot = this.captureSettings(); this.panel.hidden = false; this.panel.open = true; container.append(this.panel); };
+    public mountSettings = (container: HTMLElement): void => { this.cancelSettings(); try { this.refreshTimeFields(this.mappedFields()); } catch { /* Allow invalid setup to be edited. */ } this.settingsSnapshot = this.captureSettings(); this.panel.hidden = false; this.panel.open = true; container.append(this.panel); if(this.detectionToolbar)container.prepend(this.detectionToolbar); this.renderSettingsHealth(); this.refreshSetupCatalog?.(); };
+    public settingsHealth = (): string[] => {
+        const issues: string[] = [];
+        const unresolved = this.latest ? parameterMetadataColumns(this.latest).find(column => {
+            const target = resolveFilterTarget(column) as {table?:string;column?:string}|undefined;
+            return column.roles?.fields && !column.isMeasure && !column.sourceFieldParameters?.length &&
+                target?.table === column.displayName && target?.column === column.displayName + ' Fields';
+        }) : undefined;
+        if(unresolved)return [`Power BI is returning the ${unresolved.displayName} parameter labels, not its underlying fields. In the visual's Fields well, open the menu beside ${unresolved.displayName} and choose Show selected field, then refresh detection.`];
+        let config: ParameterConfig;
+        try { config = this.readConfig(); } catch (error) { return ["Data setup: " + String((error as Error).message || error)]; }
+        const metadata=this.latest?parameterMetadataColumns(this.latest):[];
+        for(const kind of [false,true]){const candidates=discoverParameters(metadata,kind);if(candidates.length>1)issues.push('Multiple '+(kind?'measure':'field')+' parameters detected. Review the parameter selector in Data setup.');}
+        for(const column of metadata){
+            if(column.roles?.measures && column.type?.text && !column.sourceFieldParameters?.length)issues.push(column.displayName+': text field is bound under Measures and KPIs. Move it to Fields.');
+            if(column.roles?.fields && column.isMeasure)issues.push(column.displayName+': measure is bound under Fields. Move it to Measures and KPIs.');
+        }
+        const fields = new Set(config.fields.map(field => field.name));
+        const measures = new Set(this.measureOptions());
+        try { validateAnswerGroups(this.answerGroups?.(), [...fields], [...measures]); } catch(error) { issues.push("Field & measure groups: " + (error as Error).message); }
+        for (const name of config.options) if (!fields.has(name)) issues.push("Data setup: missing field mapping for " + name + ".");
+        const setup = this.startup?.();
+        if (setup?.enabled) {
+            for (const name of setup.fields) if (!fields.has(name) || !config.options.includes(name)) issues.push("Startup loading: update field " + name + ".");
+            if (!measures.has(setup.measure)) issues.push("Startup loading: measure unavailable in current bindings: " + setup.measure + ".");
+        }
+        const time = this.readTimeSetup();
+        for (const key of ['dateField','yearField','monthField','monthIndexField'] as const) if (time[key] && !fields.has(time[key]!)) issues.push("Time intelligence: update " + key + " mapping (" + time[key] + ").");
+        const columns = this.latest ? parameterMetadataColumns(this.latest) : [];
+        for (const field of config.fields) {
+            const observed = columns.find(column => {
+                const target = resolveFilterTarget(column) as {table?:string;column?:string} | undefined;
+                return target?.table === field.table && target?.column === field.column;
+            });
+            if (observed && observed.displayName !== field.name) issues.push("Data setup: " + field.name + " is currently named " + observed.displayName + ". Review its mapping and synonyms.");
+        }
+        return [...new Set(issues)];
+    };
+    private renderSettingsHealth(): void {
+        this.panel.querySelector('.askbics-settings-health')?.remove();
+        const section = document.createElement('section'); section.className = 'askbics-settings-health askbics-setup-actions';
+        const title = document.createElement('h3'); title.textContent = 'Needs attention'; section.append(title);
+        const issues = this.settingsHealth();
+        for (const message of issues.length ? issues : ['No configuration issues detected. Fields absent from the current query cannot be verified until requested.']) {
+            const line = document.createElement('p'); line.textContent = message; section.append(line);
+        }
+        this.panel.append(section);
+    }
     public mountTimeSettings = (container: HTMLElement): void => {
         container.append(this.timePanel);
         if (!this.timeSelectRefreshers.length) this.timeSelectRefreshers = [...Object.values(this.timeSelectors), this.timeOrder].map(select => settingsSelect(select));
         this.timeSelectRefreshers.forEach(refresh => refresh());
     };
-    public groupingOptions = (): string[] => this.options.value.split(",").map(value => value.trim()).filter(Boolean);
+    public groupingOptions = (): string[] => this.bindingIssue ? [] : this.options.value.split(",").map(value => value.trim()).filter(Boolean);
     public groupAliases?: () => Record<string, string[]>;
     public defaultMeasure?: () => string | undefined;
     public additiveMeasures?: () => string[];
+    public valueSynonyms?: () => ValueSynonym[] | undefined;
+    public alwaysFilter?: () => AlwaysFilter | undefined;
     public revenue?: () => ParameterConfig["revenue"];
     public analysis?: () => ParameterConfig["analysis"];
-    public analysisModelBinding = (hierarchy: string[]): string => analysisBinding(this.readConfig().fields, hierarchy);
+    public analysisModelBinding = (hierarchy: string[]): string => analysisBinding(this.safeSettingsFields(), hierarchy);
     public preferMatrix?: (cardinalities: number[]) => boolean;
 
     constructor(element: HTMLElement, private host: powerbi.extensibility.visual.IVisualHost) {
@@ -201,24 +341,7 @@ export class FieldParameterTrial {
         this.setupSummary = document.createElement("p"); this.setupSummary.setAttribute("role", "status");
         this.setupSummary.textContent = "Waiting for field-parameter metadata. Add a field parameter to Fields and enable Show selected field in Power BI.";
         this.panel.append(this.setupSummary);
-        const detect = document.createElement("button"); detect.type = "button"; detect.textContent = "Use detected setup";
-        detect.onclick = () => {
-            const columns = this.latest ? parameterMetadataColumns(this.latest) : [];
-            const detected = discoverParameter(columns);
-            if (!detected?.options.length) { this.status.textContent = "Power BI has not exposed an unambiguous parameter source. Select all parameter fields with Show selected field enabled, or review Field and measure configuration below."; this.setupSummary.textContent = this.status.textContent; return; }
-            if (this.hydrated && (this.table.value !== detected.table || this.column.value !== detected.column)) { this.status.textContent = "A different parameter was detected. Review its target in Field and measure configuration below before switching."; this.setupSummary.textContent = this.status.textContent; return; }
-            const measures = discoverParameter(columns, true);
-            if (measures?.options.length) {
-                this.measureTable.value = measures.table; this.measureColumn.value = measures.column;
-                this.measureLabels.value = measures.options.join(", ");
-            }
-            this.autoDetected = true; this.discoverSetup(columns);
-            advanced.open = true;
-            this.status.textContent = "Detected setup loaded below. Review the fields and measures, then click Save settings to apply. Existing mappings are preserved.";
-            this.setupSummary.textContent = this.status.textContent;
-        };
-        this.panel.append(detect);
-        const advanced = document.createElement("details"); const advancedTitle = document.createElement("summary"); advancedTitle.textContent = "Field and measure configuration"; advanced.open = false; advanced.append(advancedTitle);
+        const advanced = document.createElement("details"); const advancedTitle = document.createElement("summary"); advancedTitle.textContent = "Advanced setup"; advanced.open = false; advanced.append(advancedTitle);
         const help = document.createElement("p"); help.textContent = "Fields are learned as Power BI exposes them. Select all parameter fields once to expose all options. Use overrides for custom parameter labels or metadata Power BI does not expose."; advanced.append(help);
         const input = (text: string, placeholder: string): HTMLInputElement => {
             const label = document.createElement("label"); label.textContent = text;
@@ -228,7 +351,7 @@ export class FieldParameterTrial {
         this.column = input("Parameter label column", "Parameter");
         this.options = input("Grouping options (comma-separated)", "Year, City, Assigned Tenant Name");
         const automaticLabel = document.createElement("label"); automaticLabel.className = "askbics-setup-toggle";
-        this.automatic = document.createElement("input"); this.automatic.type = "checkbox"; this.automatic.setAttribute("role", "switch");
+        this.automatic = document.createElement("input"); this.automatic.type = "checkbox"; this.automatic.checked = true; this.automatic.setAttribute("role", "switch");
         automaticLabel.append(this.automatic, document.createTextNode(" Switch grouping and filters from questions")); this.panel.insertBefore(automaticLabel, this.setupSummary);
         this.measureTable = input("Measure parameter table (optional)", "Measure Selection");
         this.measureColumn = input("Measure parameter label column", "Measure Selection");
@@ -236,7 +359,7 @@ export class FieldParameterTrial {
         this.measureStatus = document.createElement("p"); this.measureStatus.textContent = "Direct measure bindings query every bound measure. For selective queries, bind a separate measure field parameter to Measures and KPIs instead."; this.panel.append(this.measureStatus);
         const mapLabel = document.createElement("label"); mapLabel.textContent = "Model field mappings (JSON, report author setup)";
         this.mappings = document.createElement("textarea"); this.mappings.rows = 6;
-        this.mappings.placeholder = '[{"name":"Assigned Tenant Name","table":"Retail","column":"Tenant","aliases":["Tenant"],"values":["Home Living"]},{"name":"Date","table":"Calendar","column":"Date","type":"date"}]';
+        this.mappings.placeholder = '[{"name":"Field name","table":"Table name","column":"Column name","aliases":["Alternative name"],"values":["Example value"]},{"name":"Date","table":"Calendar","column":"Date","type":"date"}]';
         mapLabel.append(this.mappings); advanced.append(mapLabel);
         const label = document.createElement("label"); label.textContent = "Fields to test";
         this.select = document.createElement("select"); this.select.multiple = true; this.select.size = 3;
@@ -273,7 +396,7 @@ export class FieldParameterTrial {
         save.hidden = true; advanced.append(save); const testActions = document.createElement("div"); testActions.className = "askbics-setup-actions"; testActions.append(test, reset); troubleshooting.append(testActions, diagnosticButton, diagnosticText);
         const timePanel = document.createElement("section"); timePanel.className = "askbics-time-setup"; this.timePanel = timePanel;
         const timeTitle = document.createElement("h3"); timeTitle.textContent = "Time intelligence settings";
-        const timeHelp = document.createElement("p"); timeHelp.textContent = "Select your Year, Month and existing numeric MonthIndex columns. YTD and TTM require MonthIndex and use it directly to filter months. Use a continuous monthly index where January 2024 is 24289 and February 2024 is 24290.";
+        const timeHelp = document.createElement("p"); timeHelp.textContent = "Select the calendar date column for date-based filtering, especially when several date columns are mapped. Month accepts month names or numbers, not date columns. For monthly-index filtering, select Year and numeric MonthIndex (January 2024 = 24289).";
         timePanel.append(timeTitle, timeHelp);
         const timeSelect = (labelText: string, choices: Array<[string, string]>) => {
             const label = document.createElement("label"); label.textContent = labelText;
@@ -281,13 +404,51 @@ export class FieldParameterTrial {
             choices.forEach(([value, text]) => { const option = document.createElement("option"); option.value = value; option.textContent = text; select.append(option); });
             label.append(select); timePanel.append(label); return select;
         };
-        for (const [key, label] of [["yearField", "Year column"], ["monthField", "Month column"], ["monthIndexField", "MonthIndex column (required for YTD / TTM)"]] as const) this.timeSelectors[key] = timeSelect(label, [["", key === "monthIndexField" ? "Not configured" : "Automatic (existing behavior)"]]);
+        for (const [key, label] of [["dateField", "Calendar date column"], ["yearField", "Year column"], ["monthField", "Month column"], ["monthIndexField", "MonthIndex column (required for YTD / TTM)"]] as const) this.timeSelectors[key] = timeSelect(label, [["", key === "monthIndexField" ? "Not configured" : "Automatic (existing behavior)"]]);
         this.timeOrder = timeSelect("Ambiguous numeric periods (for example 06/07)", [["auto", "Ask for a clearer period"], ["month-year", "Month / year → June 2007"], ["year-month", "Year / month → July 2006"]]); this.timeOrder.value = "auto";
         const yearLabel = document.createElement("label"); yearLabel.textContent = "Two-digit year window starts at";
         this.timeYearStart = document.createElement("input"); this.timeYearStart.type = "number"; this.timeYearStart.min = "1900"; this.timeYearStart.max = "9899"; this.timeYearStart.value = "2000"; yearLabel.append(this.timeYearStart); timePanel.append(yearLabel);
         const examples = document.createElement("p"); examples.textContent = "June 2026, Jun 26, 26 June, 2026 Jun, 06-26 and 26/06 all mean June 2026. The default short-year window is 2000–2099. YTD is January through the selected month; TTM includes that month and the previous 11."; timePanel.append(examples);
         this.panel.append(advanced, troubleshooting, this.status); this.panel.hidden = true; element.prepend(this.panel);
-        this.settingsInputs().forEach(input => { input.oninput = () => { this.autoDetected = false; }; });
+        this.settingsInputs().forEach(input => { input.oninput = () => { this.refreshSetupCatalog?.(); }; });
+        const catalog=setupCatalog(()=>{
+            const columns=this.latest?parameterMetadataColumns(this.latest):[];
+            return {fields:this.currentCatalogFields(),measures:this.measureOptions(),
+                detectedFields:[...this.learnedFields.values()],detectedMeasures:columns.filter(c=>c.isMeasure||c.roles?.measures).map(c=>c.displayName),
+                sources:[...discoverParameters(columns).map(s=>({...s,kind:'field' as const})),...discoverParameters(columns,true).map(s=>({...s,kind:'measure' as const}))],
+                fieldSource:JSON.stringify([this.table.value,this.column.value]),measureSource:JSON.stringify([this.measureTable.value,this.measureColumn.value])};
+        },(field,original)=>{
+            if(original && original!==field.name)throw new Error('Keep the configured name to preserve references. Edit its source table or column instead.');
+            const fields=this.mappedFields();if(!original && fields.some(f=>f.name===field.name))throw new Error('This field already exists. Use Edit.');
+            this.mappings.value=JSON.stringify([...fields.filter(f=>f.name!==original),field]);
+            this.options.value=[...new Set([...this.groupingOptions(),field.name])].join(', ');
+            this.activeFieldScope?.add(field.name);
+            this.status.textContent='Field updated in draft. Save settings to apply.';
+        },(name,original)=>{
+            if(!this.measureTable.value||!this.measureColumn.value)throw new Error('Bind a measure parameter first, or drag the measure into Measures and KPIs in Power BI.');
+            if(original && original!==name)throw new Error('Keep the configured measure name to preserve references. Add a new measure instead.');
+            const values=this.measureLabels.value.split(',').map(v=>v.trim()).filter(Boolean);
+            if(!original&&values.includes(name))throw new Error('This measure already exists.');
+            this.measureLabels.value=[...new Set([...values,name])].join(', ');
+            this.status.textContent='Measure added to draft. Save settings to apply.';
+        },()=>{
+            this.cancelQuestion();this.queryCache.clear();this.completed=undefined;this.suggestionFieldsLoaded.clear();this.startupNeeded=false;
+            this.appliedFilters=[];
+            this.host.applyJsonFilter(null as unknown as IFilter,'parameterTrial','filter',1 /* FilterAction.remove; also works in browser bundles */);
+            if(this.latest)this.discoverSetup(parameterMetadataColumns(this.latest));
+            const columns=this.latest?parameterMetadataColumns(this.latest):[];
+            const candidates=discoverParameters(columns,true);
+            const detected=candidates.find(c=>c.table===this.measureTable.value&&c.column===this.measureColumn.value)||(candidates.length===1?candidates[0]:undefined);
+            if(detected){this.measureTable.value=detected.table;this.measureColumn.value=detected.column;this.measureLabels.value=[...new Set([...this.measureLabels.value.split(',').map(v=>v.trim()).filter(Boolean),...detected.options])].join(', ');}
+            this.host.refreshHostData?.();
+            this.renderSettingsHealth();this.status.textContent='Detection refreshed from available Power BI metadata. Save settings to apply. Bind new items in Power BI if they are not listed.';
+        },(kind,table,column)=>{
+            const candidates=discoverParameters(this.latest?parameterMetadataColumns(this.latest):[],kind==='measure');const selected=candidates.find(c=>c.table===table&&c.column===column);if(!selected)return;
+            if(kind==='field'){const same=this.table.value===table&&this.column.value===column;this.options.value=[...new Set([...(same?this.groupingOptions():[]),...selected.options])].join(', ');this.table.value=table;this.column.value=column;}
+            else{this.measureTable.value=table;this.measureColumn.value=column;this.measureLabels.value=[...new Set([...this.measureLabels.value.split(',').map(v=>v.trim()).filter(Boolean),...selected.options])].join(', ');}
+            this.autoDetected=true;this.status.textContent='Parameter selected. Review the available items and save settings.';
+        });
+        this.panel.insertBefore(catalog.element,advanced);this.refreshSetupCatalog=catalog.refresh;this.detectionToolbar=catalog.toolbar;
         this.automatic.onchange = () => {
             try { this.persistConfig(); this.status.textContent = this.settingsSnapshot ? "Save settings to apply changes." : this.automatic.checked ? "Automatic question grouping enabled." : "Automatic question grouping disabled."; }
             catch (error) { this.status.textContent = String((error as Error).message); }
@@ -307,10 +468,29 @@ export class FieldParameterTrial {
         }
     }
 
+    public exportBackupData = (): unknown => {
+        const c:ParameterConfig=this.savedConfiguration?JSON.parse(this.savedConfiguration):this.readConfig(); return {table:c.table,column:c.column,options:c.options,fields:c.fields.map(({values:_values,...field})=>field),enabled:c.enabled,autoDetected:c.autoDetected,measureParameter:c.measureParameter,time:c.time};
+    };
+    public validateBackupData = (value: unknown): void => {
+        const c=value as ParameterConfig; validateParameterConfig(c); const existing=this.readConfig();
+        if(c.table!==existing.table||c.column!==existing.column) throw new Error("Data setup parameter table or column differs from this model.");
+        if(c.fields.length!==existing.fields.length)throw new Error("Data setup field list differs from this model.");
+        for(const f of c.fields) {const match=existing.fields.find(x=>x.name===f.name);if(!match||match.table!==f.table||match.column!==f.column||match.type!==f.type)throw new Error("Data mapping or type differs: "+f.name);}
+        if(JSON.stringify(c.measureParameter)!==JSON.stringify(existing.measureParameter))throw new Error("Measure parameter mapping differs from this model.");
+    };
+    public importBackupData = (value: unknown): void => {
+        this.validateBackupData(value); const c=value as ParameterConfig; this.cancelSettings();
+        this.table.value=c.table;this.column.value=c.column;this.options.value=c.options.join(', ');this.mappings.value=JSON.stringify(c.fields);this.automatic.checked=c.enabled;this.autoDetected=!!c.autoDetected;
+        this.measureTable.value=c.measureParameter?.table||'';this.measureColumn.value=c.measureParameter?.column||'';this.measureLabels.value=c.measureParameter?.options.join(', ')||'';
+        this.fillOptions(c);
+        for(const [key,select] of Object.entries(this.timeSelectors))select.value=c.time?.[key as 'dateField']||'';
+        this.timeOrder.value=c.time?.numericOrder||'auto';this.timeYearStart.value=String(c.time?.twoDigitYearStart??2000);
+        if(!this.saveSettings())throw new Error(this.status.textContent||'Could not save data setup.');
+    };
     public readTimeSetup(): TimeSetup {
         return { ...Object.fromEntries(Object.entries(this.timeSelectors).filter(([, select]) => !!select.value).map(([key, select]) => [key, select.value])), numericOrder: this.timeOrder.value as TimeSetup["numericOrder"], monthIndexBase: 1, twoDigitYearStart: Number(this.timeYearStart.value) };
     }
-    public analysisDateFields = (): string[] => this.readConfig().fields.filter(field => field.type === "date").map(field => field.name);
+    public analysisDateFields = (): string[] => { try { return this.mappedFields().filter(field => field.type === "date").map(field => field.name); } catch { return []; } };
 
     private persistConfig(): void {
         if (this.settingsSnapshot) return;
@@ -326,30 +506,68 @@ export class FieldParameterTrial {
         }
         const serialized = JSON.stringify(config);
         if (serialized === this.savedConfiguration) return;
-        this.savedConfiguration = serialized;
-        this.host.persistProperties({ merge: [{ objectName: "parameterTrial", selector: null as unknown as powerbi.data.Selector, properties: { configuration: serialized } }] });
+        this.savedConfiguration = serialized; this.automaticPreference=this.automatic.checked;
+        this.host.persistProperties({ merge: [{ objectName: "parameterTrial", selector: null as unknown as powerbi.data.Selector, properties: { configuration: serialized, automaticEnabled:this.automatic.checked } }] });
     }
 
     private discoverSetup(columns: powerbi.DataViewMetadataColumn[]): void {
-        if (this.hydrated && !this.autoDetected) return;
-        const detected = discoverParameter(columns);
+        const candidates = discoverParameters(columns);
+        const detected = candidates.find(item=>item.table===this.table.value && item.column===this.column.value) || (candidates.length===1 && (!this.hydrated || this.autoDetected && !this.pending) ? candidates[0] : undefined);
         if (!detected || !detected.options.length) return;
-        if (this.hydrated && (this.table.value !== detected.table || this.column.value !== detected.column)) return;
+        const changedSource = this.table.value !== detected.table || this.column.value !== detected.column;
+        this.bindingIssue="";
         const previousOptions = this.groupingOptions();
-        const options = Array.from(new Set([...previousOptions, ...detected.options]));
+        if(changedSource){this.activeFieldScope=new Set(detected.options);this.queryCache.clear();this.completed=undefined;this.learnedFields.forEach((field,name)=>{if(!this.activeFieldScope!.has(name))this.learnedFields.delete(name);});}
+        else if(this.activeFieldScope)detected.options.forEach(name=>this.activeFieldScope!.add(name));
+        const options = Array.from(new Set([...(changedSource ? [] : previousOptions), ...detected.options]));
         this.table.value = detected.table; this.column.value = detected.column; this.options.value = options.join(", ");
-        if (!this.hydrated) this.automatic.checked = true;
+        this.confirmedFieldSource = JSON.stringify([detected.table,detected.column]);
         this.autoDetected = true; this.hydrated = true;
-        if (options.length !== previousOptions.length) this.fillOptions(this.readConfig());
+        // Populate discovery even when query settings (such as calendar choice) need repair.
+        if (changedSource || options.length !== previousOptions.length) this.fillOptions({table:detected.table,column:detected.column,options,fields:this.mappedFields(),enabled:this.automatic.checked});
         this.setupSummary.textContent = `Detected: ${detected.table} · ${options.length} grouping fields. More fields are learned as Power BI exposes them.`;
-        this.persistConfig();
+        try { this.persistConfig(); }
+        catch (error) { this.status.textContent = String((error as Error).message || error); }
     }
+
+    public availableFields = (): string[] => this.currentCatalogFields().map(field=>field.name);
+
+    private currentCatalogFields(): ModelField[] {
+        const columns=this.latest?parameterMetadataColumns(this.latest):[];
+        const source=discoverParameters(columns).find(item=>item.table===this.table.value&&item.column===this.column.value);
+        const fields=this.mappedFields();
+        if(source?.options.length)return fields.filter(field=>this.groupingOptions().includes(field.name));
+        // A scalar/measure-only response is a query projection, not removal of
+        // the previously confirmed parameter. Never use saved mappings alone.
+        if(!columns.some(column=>!column.isMeasure&&!column.roles?.measures) &&
+            this.confirmedFieldSource===JSON.stringify([this.table.value,this.column.value])) {
+            return fields.filter(field=>this.learnedFields.has(field.name)&&this.groupingOptions().includes(field.name));
+        }
+        // Saved mappings are not evidence that a field is in the current binding.
+        return fields.filter(field=>columns.some(column=>{
+            if(column.isMeasure||column.roles?.measures)return false;
+            const target=resolveFilterTarget(column) as {table?:string;column?:string}|undefined;
+            if(!target?.column || column.displayName===target.table && target.column===target.table+' Fields' || target.table===this.table.value&&target.column===this.column.value)return false;
+            return target.table===field.table&&target.column===field.column;
+        }));
+    }
+
+    private safeSettingsFields(): ModelField[] { try { return this.mappedFields(); } catch { return []; } }
 
     private mappedFields(): ModelField[] {
         let fields = JSON.parse(this.mappings.value.trim() || "[]");
         if (!Array.isArray(fields)) throw new Error("Model field mappings must be a JSON array.");
-        fields = [...fields.map((field: ModelField) => ({ ...field, ...(this.learnedFields.get(field.name)?.values?.length ? { values: Array.from(new Set([...(field.values || []), ...(this.learnedFields.get(field.name)?.values || [])])) } : {}) })), ...[...this.learnedFields.values()].filter(field => !fields.some((existing: ModelField) => existing.name === field.name))];
-        return fields;
+        if (this.discardSavedValues) fields = fields.map((field: ModelField) => ({...field, values: []}));
+        fields = [...fields.map((field: ModelField) => {
+            const learned = this.learnedFields.get(field.name);
+            if (!learned) return field;
+            // Same display name does not mean the same column after switching data.
+            if (learned.table !== field.table || learned.column !== field.column) return learned;
+            return {...field, values:Array.from(new Set([...(field.values || []), ...(learned.values || [])]))};
+        }), ...[...this.learnedFields.values()].filter(field => !fields.some((existing: ModelField) => existing.name === field.name))];
+        // Recover existing learned/saved blank dictionary entries without removing
+        // their underlying model rows or relaxing alias validation.
+        return fields.filter((field:ModelField)=>!this.bindingIssue && (!this.activeFieldScope || this.activeFieldScope.has(field.name))).map((field: ModelField) => ({...field, ...(Array.isArray(field.values) ? {values:field.values.filter(value => typeof value !== "string" || !!value.trim())} : {})}));
     }
 
     private readConfig(): ParameterConfig {
@@ -359,7 +577,7 @@ export class FieldParameterTrial {
             ? { table: this.measureTable.value.trim(), column: this.measureColumn.value.trim(), options: this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) } : undefined;
         const time = this.readTimeSetup();
         const hasTimeSetup = Object.values(this.timeSelectors).some(select => !!select.value) || time.numericOrder !== "auto" || time.monthIndexBase !== 1 || time.twoDigitYearStart !== 2000;
-const complete = { ...config, directMeasures: this.directMeasures, analysis: this.analysis?.(), revenue: this.revenue?.(), ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
+const complete = { ...config, directMeasures: this.directMeasures, answerGroups:this.answerGroups?.(),customKpis:this.customKpis?.(),aging:this.aging?.(), valueSynonyms: this.valueSynonyms?.(), alwaysFilter: this.alwaysFilter?.(), analysis: this.analysis?.(), revenue: this.revenue?.(), ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
         validateParameterConfig(complete); return complete;
     }
 
@@ -389,11 +607,18 @@ const complete = { ...config, directMeasures: this.directMeasures, analysis: thi
             const resolved = fields.filter(column => column.sourceFieldParameters?.length && column.displayName !== this.column.value.trim()).length;
             return (this.pending && sameGrouping(fields.map(column => column.displayName), this.pending.plan.groups) ? 1000 : 0) + resolved * 10 + (view.table!.columns.length ? 1 : 0);
         };
-        return candidates.sort((a, b) => score(b) - score(a))[0] || views[0];
+        const selected = candidates.sort((a, b) => score(b) - score(a))[0] || views[0];
+        if (!selected || views.length < 2) return selected;
+        // Binding metadata may arrive in a different mapping than the selected
+        // rows. Preserve discovery evidence without mixing query result rows.
+        return { ...selected, metadata: { ...selected.metadata,
+            columns: views.flatMap(view => parameterMetadataColumns(view)) } };
     }
 
     hydrate(dataView?: powerbi.DataView): void {
         if (!dataView) return;
+        const preference=dataView.metadata.objects?.parameterTrial?.automaticEnabled;
+        if(typeof preference==='boolean' && this.automaticPreference===undefined && !this.settingsSnapshot){this.automaticPreference=preference;this.automatic.checked=preference;}
         const saved = dataView.metadata.objects?.parameterTrial?.configuration;
         const owned = dataView.metadata.objects?.parameterTrial?.filter as unknown as IFilter | IFilter[] | undefined;
         if (saved && !this.recoveredEmptyMeasureFilter) {
@@ -418,7 +643,7 @@ const complete = { ...config, directMeasures: this.directMeasures, analysis: thi
         try {
             const config = JSON.parse(serialized) as ParameterConfig; validateParameterConfig(config);
             this.table.value = config.table; this.column.value = config.column;
-            this.options.value = config.options.join(", "); this.mappings.value = JSON.stringify(config.fields, null, 2); this.automatic.checked = config.enabled; this.fillOptions(config);
+            this.options.value = config.options.join(", "); this.mappings.value = JSON.stringify(config.fields, null, 2); this.automatic.checked = this.automaticPreference ?? config.enabled; this.fillOptions(config);
             this.measureTable.value = config.measureParameter?.table || ""; this.measureColumn.value = config.measureParameter?.column || ""; this.measureLabels.value = config.measureParameter?.options.join(", ") || "";
             for (const [key, select] of Object.entries(this.timeSelectors)) select.value = config.time?.[key as "dateField" | "yearField" | "monthField" | "monthIndexField"] || "";
             this.timeOrder.value = config.time?.numericOrder || "auto"; this.timeYearStart.value = String(config.time?.twoDigitYearStart ?? 2000);
@@ -427,8 +652,21 @@ const complete = { ...config, directMeasures: this.directMeasures, analysis: thi
         } catch { this.status.textContent = "Saved configuration is invalid. Review and save it again."; }
     }
 
-    async prepareQuestion(question: string, refresh = false): Promise<QnaResponse | undefined> {
+    private modelWork = new ModelWorkQueue();
+    prepareQuestion(question: string, refresh = false): Promise<QnaResponse | undefined> {
+        let summary = false;
+        if (question.startsWith(';transactions:')) {
+            try {
+                const scopes = JSON.parse(decodeURIComponent(question.slice(14)));
+                summary = Array.isArray(scopes) && scopes.length > 0 && scopes.every(scope => scope.summaryCard === true);
+            } catch { /* The regular parser reports malformed requests. */ }
+        }
+        return this.modelWork.run(summary, () => this.prepareScheduledQuestion(question, summary ? false : refresh));
+    }
+
+    private async prepareScheduledQuestion(question: string, refresh = false): Promise<QnaResponse | undefined> {
         this.stopSuggestionLoading();
+        if(this.bindingIssue)throw new Error(this.bindingIssue);
         const key = question.trim().toLowerCase().replace(/\s+/g, " ");
         const config = this.automaticEnabled() ? JSON.stringify({...this.readConfig(), groupAliases: this.groupAliases?.()}) : "";
         if (!refresh && !this.pending && this.completed?.question === key && this.completed.config === config && this.completed.view === this.latest) {
@@ -449,6 +687,29 @@ const complete = { ...config, directMeasures: this.directMeasures, analysis: thi
         this.cancel();
         let config = this.readConfig();
         config.groupAliases = this.groupAliases?.();
+        compileKpis(config.customKpis,this.measures.filter(name=>!config.customKpis?.some(k=>k.name===name)));
+        config.additiveMeasures=config.additiveMeasures?.filter(name=>!config.customKpis?.some(k=>k.name===name));
+        if (question.startsWith(";cashflow:")) return answerCashFlow(question, config, this.measures, async plan => {
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            const response = await this.request(plan, config, refresh);
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            return response;
+        });
+        if (question.startsWith(";transactions:")) return answerTransactions(question, config, this.measures, async plan => {
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            const response = await this.request(plan, config, refresh);
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            return response;
+        });
+        const aging = /\baging\b/i.test(question) ? await answerAging(question, config, this.measures, async plan => {
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            const response = await this.request(plan, config, refresh);
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            return response;
+        }) : undefined;
+        if (aging) return aging;
+        question = expandAnswerGroups(question, config.answerGroups);
+        question = resolveValueSynonyms(question, config.valueSynonyms, config.fields.map(f=>({...f,aliases:[...(f.aliases||[]),...(config.groupAliases?.[f.name]||[])]})), this.measures);
         const analysis = planAnalysis(question, config, this.measures);
         if (analysis) return runAnalysis(analysis, config, this.measures, async plan => {
             if (revision !== this.questionRevision) throw new Error("Query cancelled.");
@@ -656,14 +917,47 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             answer.table.rows = answer.table.rows.map(row => [...row.slice(0, width), ...(rowTotals.get(JSON.stringify(row.slice(0, rowCount))) || pivot.measures.map(() => "—"))]);
             answer.table.modelTotals = ["Grand Total", ...Array(rowCount - 1).fill(""), ...pivot.columnValues.flatMap(value => columnTotals.get(value) || pivot.measures.map(() => "—")), ...grand];
         }
+        // Keep real field identities until all marginal model queries finish.
+        // Outline labels are presentation only and must never become query fields.
+        if (plan.explicitParent && answer.table && !answer.table.matrix && !answer.table.duplicateRows?.length) {
+            const parents = new Map<string, string[]>();
+            const rowFields=answer.table.modelPivot?.rowFields||plan.groups;
+            const rowCount = answer.table.columnLayoutNotice ? rowFields.length : plan.matrixRowCount!;
+            for (let depth = 1; depth < rowCount; depth++) {
+                const groups = rowFields.slice(0, depth);
+                const totals = await this.request({...plan, groups, presentation:"table", explicitParent:false, matrixRowCount:undefined}, config, refresh);
+                if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+                if (!totals.table) throw new Error("Power BI did not return parent totals.");
+                if (!pivot) {
+                    totals.table.rows.forEach(row => parents.set(JSON.stringify(row.slice(0, depth)), row.slice(depth)));
+                } else {
+                    const columnFields = pivot.columnFields || [pivot.columnField];
+                    const cells = await this.request({...plan, groups:[...groups,...columnFields], presentation:"table", explicitParent:false, matrixRowCount:undefined}, config, refresh);
+                    if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+                    if (!cells.table) throw new Error("Power BI did not return parent column totals.");
+                    const values = new Map(cells.table.rows.map(row => [JSON.stringify([row.slice(0,depth),row.slice(depth,depth+columnFields.length).join(" · ")]),row.slice(depth+columnFields.length)]));
+                    totals.table.rows.forEach(row => {
+                        const path=row.slice(0,depth);
+                        parents.set(JSON.stringify(path), [...pivot.columnValues.flatMap(value=>values.get(JSON.stringify([path,value])) || pivot.measures.map(()=>"—")),...row.slice(depth)]);
+                    });
+                }
+            }
+            answer.table = outlineModelRows(answer.table, rowCount, parents);
+        }
         return answer;
     }
 
     private request(plan: ParameterPlan, config: ParameterConfig, refresh = false): Promise<QnaResponse> {
-        if (config.revenuePercentage && plan.measures.length && !plan.listOnly) return revenueRequest(plan, config, p => this.requestBase(p, config, refresh), (view, p) => { this.requestConfig = config; return this.answer(view, p); });
+        if(this.bindingIssue)return Promise.reject(new Error(this.bindingIssue));
+        if (config.revenuePercentage && plan.measures.length && !plan.listOnly) return revenueRequest(plan, config, p => this.request(p, {...config,revenuePercentage:false}, refresh), (view, p) => { this.requestConfig = config; return this.answer(view, p); });
+        const native=this.measures.filter(name=>!config.customKpis?.some(k=>k.name===name));
+        if(plan.measures.some(name=>config.customKpis?.some(k=>k.enabled&&k.name===name)))return customKpiRequest(plan,config,native,p=>this.request(p,config,refresh),(view,p)=>{this.requestConfig=config;return this.answer(view,p);});
+
         return this.requestBase(plan, config, refresh);
     }
     private requestBase(plan: ParameterPlan, config: ParameterConfig, refresh = false): Promise<QnaResponse> {
+        this.boundedCashFlow = !!plan.cashFlowRowLimit;
+        plan = applyAlwaysFilter(plan, config);
         if (!plan.groups.length) return this.requestScalarWithGrouping(plan, config, refresh);
         if (this.fieldOnlyBinding && plan.measures.length) return Promise.reject(new Error("This visual is configured for field-only lists. Add a measure or Measure Selector to Measures and KPIs to ask measure questions."));
         this.dataRequestsStopped = false;
@@ -674,7 +968,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         if (cached) { this.rememberQuery(plan, config, cached); this.trace("query-cache-hit", { groups: plan.groups }); return Promise.resolve(this.answer(cached, plan)); }
         const parameterTarget = filterSignature({ target: { table: config.table, column: config.column } });
         const priorPredicates = this.appliedFilters.filter(filter => filterSignature({ target: filter.target }) !== parameterTarget);
-        const needsReset = priorPredicates.length > 0 && JSON.stringify(priorPredicates.map(filterSignature).sort()) !== JSON.stringify(filters.filter(filter => filterSignature({ target: filter.target }) !== parameterTarget).map(filterSignature).sort());
+        const needsReset = this.resetFiltersOnRequest || priorPredicates.length > 0 && JSON.stringify(priorPredicates.map(filterSignature).sort()) !== JSON.stringify(filters.filter(filter => filterSignature({ target: filter.target }) !== parameterTarget).map(filterSignature).sort());
         const setupError = this.parameterLabelError(this.latest, config);
         if (setupError) { this.status.textContent = setupError; return Promise.reject(new Error(setupError)); }
         const matchesCurrent = this.matches(this.latest, plan, filters);
@@ -784,23 +1078,28 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             }
         }
         if (!this.pending && !this.loadingSuggestionValues && (dataView !== this.latest || signature !== this.lastDataSignature)) {
-            this.startupNeeded = true; this.queryCache.clear(); this.completed = undefined;
+            // A fresh host object can carry identical data. Invalidate answer caches
+            // for external updates, but do not restart the startup query on an echo.
+            if (signature !== this.lastDataSignature) this.startupNeeded = true;
+            this.queryCache.clear(); this.completed = undefined;
             this.suggestionFieldsLoaded.clear();
-            this.learnedFields.forEach((field, name) => this.learnedFields.set(name, { ...field, values: [] }));
+            if (this.lastDataSignature) this.discardSavedValues = true;
+            this.learnedFields.forEach((field, name) => this.learnedFields.set(name, {...field, values: []}));
             this.onDataContextChanged?.();
         }
         this.lastDataSignature = signature;
         ++this.dataRevision;
         this.latest = dataView;
 
-        this.trace("host-shape", { tableColumns: dataView.table?.columns.map(c => ({ name: c.displayName, roles: c.roles, isMeasure: c.isMeasure })), matrixLevels: dataView.matrix?.rows.levels.map(level => level.sources.map(c => c.displayName)), matrixMeasures: dataView.matrix?.valueSources.map(c => c.displayName), metadataColumns: dataView.metadata.columns?.map(c => ({ name: c.displayName, roles: c.roles, isMeasure: c.isMeasure, parameters: c.sourceFieldParameters?.map(p => p.displayName) })) });
+        this.trace("host-shape", { tableColumns: dataView.table?.columns.map(c => ({ name: c.displayName, roles: c.roles, isMeasure: c.isMeasure })), matrixLevels: dataView.matrix?.rows.levels.map(level => level.sources.map(c => c.displayName)), matrixMeasures: dataView.matrix?.valueSources.map(c => c.displayName), metadataColumns: dataView.metadata.columns?.map(c => ({ name: c.displayName, queryName:c.queryName, target:resolveFilterTarget(c), type:c.type, roles: c.roles, isMeasure: c.isMeasure, parameters: c.sourceFieldParameters?.map(p => ({name:p.displayName,target:p.expr?resolveFilterTarget({displayName:p.displayName,expr:p.expr}):undefined})) })) });
         this.trace("data-view", { columns: table?.columns.map(column => column.displayName), rows: table?.rows?.length, segmented: !!dataView.metadata.segment, pending: !!this.pending });
         this.hasParameterContext = this.hasParameterContext || (table?.columns || []).some(column =>
             !!column.sourceFieldParameters?.length || column.displayName === this.column.value.trim());
         const deliveredMeasures = (table?.columns || []).filter(column => column.roles?.measures || column.isMeasure);
         const previousMeasureSetup = JSON.stringify([this.measureTable.value, this.measureColumn.value, this.measureLabels.value]);
         const metadataColumns = parameterMetadataColumns(dataView);
-        const detectedMeasures = discoverParameter(metadataColumns, true);
+        const measureCandidates = discoverParameters(metadataColumns, true);
+        const detectedMeasures = measureCandidates.find(c=>c.table===this.measureTable.value&&c.column===this.measureColumn.value) || (measureCandidates.length===1&&!this.pending?measureCandidates[0]:undefined);
         const catalogMeasures = metadataColumns.filter(column => column.roles?.measures || column.isMeasure);
         if (catalogMeasures.length || table?.columns.length && !this.pending) {
         this.measureBindingObserved = true;
@@ -808,11 +1107,12 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         this.directMeasures = [...new Map(catalogMeasures.map(column => [column.displayName, column])).values()].filter(column => !column.sourceFieldParameters?.length && !metadataColumns.some(metadata => metadata.displayName === column.displayName && !!metadata.sourceFieldParameters?.length)).map(column => column.displayName);
         }
         this.trace("parameter-metadata", { measures: metadataColumns.filter(column => column.roles?.measures || column.isMeasure).map(column => ({ name: column.displayName, isMeasure: column.isMeasure, numeric: !!(column.type?.numeric || column.type?.integer), sources: column.sourceFieldParameters?.map(source => ({name: source.displayName, hasExpression: !!source.expr})) })) });
-        if (detectedMeasures?.options.length && (!this.measureTable.value || this.measureTable.value === detectedMeasures.table && this.measureColumn.value === detectedMeasures.column)) {
+        if (detectedMeasures?.options.length) {
+            const sameSource=this.measureTable.value===detectedMeasures.table&&this.measureColumn.value===detectedMeasures.column;
             this.measureTable.value = detectedMeasures.table; this.measureColumn.value = detectedMeasures.column;
-            this.measureLabels.value = [...new Set([...this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean), ...detectedMeasures.options])].join(", ");
+            this.measureLabels.value = [...new Set([...(sameSource?this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean):[]), ...detectedMeasures.options])].join(", ");
         }
-        this.measures = this.fieldOnlyBinding ? [] : [...new Set([...this.directMeasures, ...(this.hasMeasureParameter ? this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) : this.directMeasures)])];
+        this.nativeMeasures = this.fieldOnlyBinding ? [] : [...new Set([...this.directMeasures, ...(this.hasMeasureParameter ? this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) : this.directMeasures)])];
         this.measureStatus.textContent = this.hasMeasureParameter
             ? "Selective measures configured. Lists use one available measure internally and display only field values. No additional support measure is required."
             : "Direct measure bindings query every bound measure. Bind a measure field parameter to enable selective queries.";
@@ -825,8 +1125,35 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             this.learnedFields.set(column.displayName, { name: column.displayName, table: target.table, column: target.column,
                 type: column.type?.dateTime ? "date" : column.type?.numeric || column.type?.integer ? "number" : "text", values });
         });
+        // A foreign binding without parameter expansion cannot use a saved source.
+        // Quarantine stale mappings, but keep their saved configuration for recovery.
+        if(!this.pending && !this.loadingSuggestionValues && this.hydrated){
+            const delivered=metadataColumns.filter(c=>!c.isMeasure&&!c.roles?.measures);
+            const known=JSON.parse(this.mappings.value.trim()||'[]') as ModelField[];
+            const foreign=delivered.length>0 && delivered.every(c=>{const t=resolveFilterTarget(c) as {table?:string;column?:string}|undefined;return t?.table && t.column && t.table!==this.table.value && !known.some(f=>f.table===t.table&&f.column===t.column && this.options.value.split(',').map(v=>v.trim()).includes(f.name));});
+            if(foreign && !discoverParameters(metadataColumns).some(c=>c.options.length)){
+                this.bindingIssue='The bound fields have changed, but Power BI has not supplied resolved field-parameter metadata. Old fields are hidden and old queries are stopped. Enable Show selected field on the bound parameter, then refresh detection.';
+                this.queryCache.clear();this.completed=undefined;this.learnedFields.clear();this.suggestionFieldsLoaded.clear();this.startupNeeded=false;
+                this.setupSummary.textContent=this.bindingIssue;this.onDataContextChanged?.();
+            }
+        }
+        // Metadata can describe parameter members outside the current row projection.
+        // Learn their schema without issuing a broad query or inventing dictionary values.
+        for(const column of metadataColumns){
+            if(column.isMeasure||column.roles?.measures||!column.sourceFieldParameters?.length)continue;
+            const target=resolveFilterTarget(column) as {table?:string;column?:string}|undefined;
+            if(!target?.table||!target.column)continue;
+            const sources=discoverParameters([column]);
+            if(!sources.some(source=>source.options.includes(column.displayName)))continue;
+            const existing=this.learnedFields.get(column.displayName);
+            this.learnedFields.set(column.displayName,{name:column.displayName,table:target.table,column:target.column,type:column.type?.dateTime?'date':column.type?.numeric||column.type?.integer?'number':'text',values:existing?.table===target.table&&existing.column===target.column?existing.values:[]});
+        }
         this.discoverSetup(metadataColumns);
-        if (detectedMeasures?.options.length && this.hydrated && previousMeasureSetup !== JSON.stringify([this.measureTable.value, this.measureColumn.value, this.measureLabels.value])) this.persistConfig();
+        if(this.settingsSnapshot)this.refreshSetupCatalog?.();
+        if (detectedMeasures?.options.length && this.hydrated && previousMeasureSetup !== JSON.stringify([this.measureTable.value, this.measureColumn.value, this.measureLabels.value])) {
+            try { this.persistConfig(); }
+            catch (error) { this.status.textContent = String((error as Error).message || error); }
+        }
         const owned = dataView.metadata.objects?.parameterTrial?.filter as unknown;
         const ownedList = owned ? (Array.isArray(owned) ? owned : [owned]) as IFilter[] : [];
         // The owned property can echo only the field-parameter predicate while
@@ -838,7 +1165,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         // an acknowledgement of this visual's parameterTrial self-filter.
         const outgoing = dataView.metadata.objects?.general?.filter as unknown;
         const outgoingFilters = (outgoing ? Array.isArray(outgoing) ? outgoing : [outgoing] : []) as IFilter[];
-        const outgoingSignatures = new Set(outgoingFilters.filter(filter => !!filter?.target).map(filterSignature));
+        const outgoingSignatures = new Set([...this.outgoingSelectionBatches.flat(), ...outgoingFilters.filter(filter => !!filter?.target).map(filterSignature)]);
         const publicJson = (jsonFilters || []).filter(filter => !!(filter as IFilter)?.target && !outgoingSignatures.has(filterSignature(filter)));
         this.latestFilters = [...new Map([...ownedJson, ...publicJson].map(filter => [filterSignature(filter), filter])).values()];
         const describe = (filters: powerbi.IFilter[]) => filters.map(filter => {
@@ -856,6 +1183,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             }
             this.trace("owned-filters-cleared");
             this.pending.clearing = false;
+            this.pending.resetAcknowledged = true;
             this.appliedFilters = [];
             try { this.sendPending(); } catch (error) { this.fail(`Could not request model data: ${String(error)}`); }
             return;
@@ -910,7 +1238,8 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
 
     private matches(dataView: powerbi.DataView | undefined, plan: ParameterPlan, filters: IFilter[]): boolean {
         if (!dataView) { this.waitingReason = "No data view received."; return false; }
-        if (dataView.metadata.segment) { this.waitingReason = "Power BI is still returning result segments."; return false; }
+        if (plan.transactionRuleProbe && sameGrouping((dataView.table?.columns || []).filter(c=>!c.roles?.measures&&!c.isMeasure).map(c=>c.displayName),plan.groups) && (dataView.table?.rows?.length || 0) > 5000) { this.fail("Transaction rules support at most 5,000 transactions. Narrow the period or filters."); return false; }
+        if (dataView.metadata.segment && !plan.cashFlowRowLimit) { this.waitingReason = "Power BI is still returning result segments."; return false; }
         const table = dataView.table || categoricalAsTable(dataView.categorical) || readModelMatrix(dataView.matrix)?.table;
         if (!table) { this.waitingReason = "Power BI returned metadata without usable table, matrix, or categorical result data. Check the visual data mapping and bindings."; return false; }
         const columns = (table?.columns || []).filter(column => !column.roles?.measures && !column.isMeasure);
@@ -928,13 +1257,17 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const expected = filters.map(filterSignature), actual = this.latestFilters.map(filterSignature);
         // Resolved parameter fields acknowledge a grouping-only selection. Some
         // Power BI hosts do not echo that self-filter in the JSON filter payload.
-        // Never use this fallback for value/date filters or their later removal.
+        // Model predicates require explicit acknowledgement or a fresh serialized response.
         const explicitAcknowledgement = plan.filters.every(filter => actual.includes(filterSignature(filter)));
         // Desktop can apply self-filters in DAX while returning neither owned
         // JSON filters nor options.jsonFilters. A fresh Data update after the
         // serialized submission is the host completion signal in that mode.
         // Never infer completion from a resize/style update or cached old data.
-        const noEcho = this.latestFilters.length === 0;
+        const parameterTargets = [this.requestConfig && {table:this.requestConfig.table,column:this.requestConfig.column}, this.requestConfig?.measureParameter && {table:this.requestConfig.measureParameter.table,column:this.requestConfig.measureParameter.column}].filter(Boolean).map(target=>filterSignature({target}));
+        // Some hosts echo only parameter selectors, omitting applied model predicates.
+        // Accept that mode only after an acknowledged reset and a fresh Data event; conflicting echoes
+        // are still rejected below and partially echoed model predicates stay strict.
+        const noEcho = this.latestFilters.length===0 || !!this.pending?.resetAcknowledged && this.latestFilters.every(filter=>parameterTargets.includes(filterSignature({target:(filter as IFilter).target})));
         const freshSubmission = !!this.pending && !this.pending.clearing && this.dataRevision > this.submittedRevision &&
             JSON.stringify(this.pending.filters.map(filterSignature).sort()) === JSON.stringify(expected.slice().sort());
         const confirmed = this.confirmedView === dataView && this.confirmedFilters === JSON.stringify(expected.slice().sort());
@@ -995,7 +1328,8 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
     private answer(dataView: powerbi.DataView, plan: ParameterPlan): QnaResponse {
         const sourceTable = dataView.table || categoricalAsTable(dataView.categorical) || readModelMatrix(dataView.matrix)?.table;
         if (!sourceTable) throw new Error("Power BI returned no data table.");
-        let table: powerbi.DataViewTable = sourceTable;
+        if (plan.transactionRuleProbe && (sourceTable.rows?.length || 0) > 5000) throw new Error("Transaction rules support at most 5,000 transactions. Narrow the period or filters.");
+        let table: powerbi.DataViewTable = plan.cashFlowRowLimit ? {...sourceTable,rows:(sourceTable.rows||[]).slice(0,plan.cashFlowRowLimit)} : sourceTable;
         const time = this.requestConfig?.time;
         if (!plan.rank && (plan.listOnly || plan.groups.some(name=>timeFieldOrder(name)>=0 || name === time?.yearField || name === time?.monthField))) {
             const columns = plan.groups.map(name=>table!.columns.findIndex(column=>column.displayName === name));
@@ -1012,7 +1346,13 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         }));
         const text = `${plan.listOnly ? "List of " : plan.measures.join(", ") + " by "}${plan.groups.join(" and ")}.${plan.summary.length ? " Filtered by: " + plan.summary.join("; ") + "." : ""}${rows.length ? "" : " No matching data."}`;
         const result: QnaResponse = { text, modelQuery: true, table: { columns: names, rows, rowIndices: rows.map(() => []) } };
+        result.table!.modelResultComplete = !dataView.metadata.segment && (!plan.cashFlowRowLimit || (sourceTable.rows?.length||0)<=plan.cashFlowRowLimit);
+        if (plan.transactionRuleProbe || plan.transactionRuleData) result.table!.modelGroupValues = (table.rows || []).map(row=>indices.slice(0,plan.groups.length).map(index=>row[index] == null ? null : row[index] instanceof Date ? (row[index] as Date).toISOString() : row[index] as string | number | boolean));
         result.table!.modelRawRows = (table.rows || []).map(row=>indices.map(index=>typeof row[index] === "number" ? Number(row[index]) : null));
+        if (plan.cashFlowData) {
+            result.table!.modelGroupValues = (table.rows || []).map(row=>indices.slice(0,plan.groups.length).map(index=>row[index] == null ? null : row[index] instanceof Date ? (row[index] as Date).toISOString() : row[index] as string | number | boolean));
+            return result;
+        }
         result.table!.modelRawTotals = table.totals ? indices.map(index=>typeof table.totals![index] === "number" ? Number(table.totals![index]) : null) : undefined;
         result.table!.modelEvaluatedTotals = indices.map(index => typeof table.totals?.[index] === "number");
         result.table!.modelFormats = indices.map(index=>table.columns[index].format);
@@ -1048,7 +1388,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             const totals = table.totals?.slice() || table.columns.map(() => null);
             plan.measures.forEach(name => {
                 const column = table.columns.findIndex(item => item.displayName === name);
-                if (column < 0 || totals[column] != null || table.columns[column].format?.includes("%")) return;
+                if (column < 0 || totals[column] != null || table.columns[column].format?.includes("%") || this.requestConfig?.customKpis?.some(k=>k.name===name)) return;
                 const values = (table.rows || []).map(row => row[column]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
                 if (values.length) totals[column] = values.reduce((sum, value) => sum + value, 0);
             });
@@ -1101,8 +1441,9 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
                 });
             }
             const editor = result.table!.modelEditor;
-            result.table = pivotModelTable(result.table!, plan.groups.length, rowTotals, plan.matrixRowCount);
-            if (editor) result.table.modelEditor = { ...editor, rows: plan.groups.slice(0, plan.matrixRowCount ?? -1), columns: plan.groups.slice(plan.matrixRowCount ?? -1) };
+            result.table = pivotModelTable(result.table!, plan.groups.length, rowTotals, plan.matrixRowCount, [this.requestConfig?.time?.monthField,this.requestConfig?.time?.yearField].filter((name):name is string=>!!name));
+            if(result.table.columnLayoutNotice)result.text += " " + result.table.columnLayoutNotice;
+            if (editor && !result.table.duplicateRows?.length && !result.table.columnLayoutNotice) result.table.modelEditor = { ...editor, rows: plan.groups.slice(0, plan.matrixRowCount ?? -1), columns: plan.groups.slice(plan.matrixRowCount ?? -1) };
         }
         if (plan.rank) {
             if (plan.presentation === "matrix") throw new Error("Use table or chart format for ranked answers.");
@@ -1114,6 +1455,8 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             result.table!.rows = ranked.map(index => rows[index]); result.table!.rowIndices = ranked.map(() => []);
             result.table!.modelRawRows = ranked.map(index => result.table!.modelRawRows![index]);
             result.table!.modelSelections = ranked.map(index => result.table!.modelSelections![index]);
+            result.table!.modelRowSelections = ranked.map(index => result.table!.modelRowSelections![index]);
+            result.table!.modelCellSelections = ranked.map(index => result.table!.modelCellSelections![index]);
             // The model total covers the full filter context, not the top/bottom subset.
             delete result.table!.modelTotals;
             if (result.chart) {
@@ -1129,5 +1472,5 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
     private cancel(message = "Query cancelled. No answer was calculated from previous data."): void {
         if (this.timer) clearTimeout(this.timer); if (this.recoveryTimer) clearTimeout(this.recoveryTimer); const pending = this.pending; this.pending = undefined; pending?.reject(new Error(message));
     }
-    destroy(): void { this.stopSuggestionLoading(); this.cancel(); this.panel.remove(); }
+    destroy(): void { this.modelWork.invalidate(); this.stopSuggestionLoading(); this.cancel(); this.panel.remove(); }
 }

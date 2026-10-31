@@ -46,7 +46,7 @@ async function request(path: string, body: object, signal?: AbortSignal) {
   try {
     const response = await fetch(`/ask/api/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(session ? { Authorization: `Bearer ${session}` } : {}) }, body: JSON.stringify(body), signal: timeout.signal });
     const result = await response.json(); return { response, result };
-  } catch (e) { throw Error(timeout.signal.aborted ? 'The request timed out. Check the app server connection and retry.' : 'Could not reach askBICS. Check your connection and retry.'); }
+  } catch (e) { throw Error(signal?.aborted ? 'Query cancelled.' : timeout.signal.aborted ? 'The request timed out. Check the app server connection and retry.' : 'Could not reach askBICS. Check your connection and retry.'); }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }
 async function resumeSession() {
@@ -133,15 +133,26 @@ async function mount() {
       await loads.get(field);
     }
   };
+  const transactionRequests=new Set<AbortController>();
+  let latestDax = {question:"",queries:[] as string[]};
+  ui.daxDiagnostics = () => latestDax;
   ui.prepareQuestion = async (question, refresh) => {
+    latestDax = {question,queries:[]};
     const current = revision;
     ui!.setLoadingStage('Querying your Power BI model…');
     // Saved-report dashboards may ask several questions at once. The server serializes them per session.
-    const result = await api('visual-query', { question, refresh, settings: engine.getLayoutSettings(), time, selections: ui!.getState().activeView === 'conversation' ? crossSelections : [] });
+    const requestController=new AbortController();transactionRequests.add(requestController);
+    let result:any;
+    try { result = await api('visual-query', { question, refresh, settings: engine.getLayoutSettings(), time, selections: ui!.getState().activeView === 'conversation' ? crossSelections : [] },requestController.signal); }
+    finally {transactionRequests.delete(requestController);}
     if (current !== revision) throw Error('Question cancelled.');
+    latestDax = {question,queries:result.daxQueries || []};
     return result;
   };
-  ui.cancelQuestion = () => { revision++; controller?.abort(); };
+  ui.cancelQuestion = () => { revision++; controller?.abort(); for(const request of transactionRequests)request.abort(); transactionRequests.clear(); };
+  ui.exportBackupData = () => ({time:{...savedTime}});
+  ui.validateBackupData = (value: any) => { if(!value || !value.time || value.fields)throw new Error('This data setup is not compatible with Teams.');for(const key of ['dateField','yearField','monthField','monthIndexField']) {const name=value.time[key];if(name&&!model.dimensions.some((d:any)=>d.name===name&&(key!=='monthIndexField'||d.numeric||d.type==='number')&&(key!=='dateField'||d.type==='date')))throw new Error('Time field missing or incompatible: '+name);} };
+  ui.importBackupData = (value: any) => {ui!.validateBackupData!(value);time={...value.time};savedTime={...time};ui!.invalidateModelAnswers();scheduleSave();};
   ui.timeSettings = () => time;
   ui.analysisDateFields = () => model.dimensions.filter(field => field.type === 'date').map(field => field.name);
   const controls = new Map<string, HTMLSelectElement>();

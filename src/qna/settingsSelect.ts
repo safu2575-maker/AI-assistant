@@ -1,6 +1,7 @@
+import { settingsPopup } from './settingsPopup';
 import { settingsHelp, settingsOptionHelp } from "./settingsHelp";
 /** Searchable picker backed by the settings form's existing select. */
-export function settingsSelect(select: HTMLSelectElement, searchable = true): () => void {
+export function settingsSelect(select: HTMLSelectElement, searchable = true, optionIcon?: (value:string)=>SVGSVGElement): () => void {
     const host = document.createElement("div"); host.className = "askbics-settings-select";
     const trigger = document.createElement("button"); trigger.type = "button";
     trigger.className = "askbics-settings-select__trigger"; trigger.setAttribute("aria-haspopup", "listbox");
@@ -10,14 +11,16 @@ export function settingsSelect(select: HTMLSelectElement, searchable = true): ()
     const search = document.createElement("input"); search.type = "search"; search.placeholder = "Search options…";
     search.setAttribute("aria-label", `Search ${select.getAttribute("aria-label") || "options"}`);
     const list = document.createElement("div"); list.className = "askbics-settings-select__options"; list.setAttribute("role", "listbox"); list.setAttribute("aria-label", select.getAttribute("aria-label") || "Options");
+    if(optionIcon){host.classList.add('askbics-icon-picker');host.dataset.popupMinWidth='264';list.classList.add('askbics-icon-grid');}
     if (searchable) popup.append(search); popup.append(list); host.append(trigger, popup); select.after(host); select.hidden = true;
     const close = () => { popup.hidden = true; trigger.setAttribute("aria-expanded", "false"); };
-    const refresh = () => { trigger.disabled=select.disabled; const full=select.selectedOptions[0]?.textContent || "Select a field"; caption.textContent = full.split(" — ")[0]; const explanation=settingsHelp(select.getAttribute("aria-label") || ""); if(explanation) trigger.dataset.tooltip=explanation; else delete trigger.dataset.tooltip; trigger.removeAttribute("title"); trigger.setAttribute("aria-label", `${select.getAttribute("aria-label")}: ${full}`); close(); };
+ settingsPopup(host,close);
+    const refresh = () => { trigger.disabled=select.disabled; const full=select.selectedOptions[0]?.textContent || "Select a field"; caption.textContent = full.split(" — ")[0]; if(optionIcon){caption.classList.add('askbics-icon-option');caption.prepend(optionIcon(select.value));} const explanation=settingsHelp(select.getAttribute("aria-label") || ""); if(explanation) trigger.dataset.tooltip=explanation; else delete trigger.dataset.tooltip; trigger.removeAttribute("title"); trigger.setAttribute("aria-label", `${select.getAttribute("aria-label")}: ${full}`); close(); };
     const draw = () => {
         list.replaceChildren();
         Array.from(select.options).filter(option => (option.textContent || "").toLowerCase().includes(search.value.toLowerCase())).forEach(option => {
             const button = document.createElement("button"); button.type = "button"; button.setAttribute("role", "option");
-            button.setAttribute("aria-selected", String(option.value === select.value)); button.textContent = (option.textContent || "").split(" — ")[0]; const explanation=settingsOptionHelp(option.textContent || ""); if(explanation)button.dataset.tooltip=explanation;
+            button.setAttribute("aria-selected", String(option.value === select.value)); button.textContent = (option.textContent || "").split(" — ")[0]; if(optionIcon){button.classList.add('askbics-icon-option');button.setAttribute('aria-label',option.textContent||'');button.title=option.textContent||'';button.textContent='';button.append(optionIcon(option.value));} const explanation=settingsOptionHelp(option.textContent || ""); if(explanation)button.dataset.tooltip=explanation;
             // Do not let the search blur hide the option before its click arrives.
             button.addEventListener("pointerdown", event => { event.preventDefault(); event.stopPropagation(); });
             button.onclick = event => { event.preventDefault(); event.stopPropagation(); select.value = option.value; select.dispatchEvent(new Event("input", {bubbles:true})); select.dispatchEvent(new Event("change", {bubbles:true})); refresh(); trigger.focus(); };
@@ -35,10 +38,10 @@ export function settingsSelect(select: HTMLSelectElement, searchable = true): ()
             event.preventDefault(); trigger.click(); return;
         }
         if (event.key === "Escape" && !popup.hidden) { event.stopPropagation(); event.preventDefault(); close(); trigger.focus(); }
-        if (!popup.hidden && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        if (!popup.hidden && ["ArrowDown", "ArrowUp", "Home", "End", ...(optionIcon ? ["ArrowLeft", "ArrowRight"] : [])].includes(event.key)) {
             const items = Array.from(list.querySelectorAll<HTMLButtonElement>("button")); if (!items.length) return;
             event.preventDefault(); const current = items.indexOf(document.activeElement as HTMLButtonElement);
-            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : current < 0 ? (event.key === "ArrowUp" ? items.length - 1 : 0) : Math.max(0, Math.min(items.length - 1, current + (event.key === "ArrowDown" ? 1 : -1)));
+            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : current < 0 ? (event.key === "ArrowUp" ? items.length - 1 : 0) : Math.max(0, Math.min(items.length - 1, current + (event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : (event.key === "ArrowDown" ? 1 : -1) * (optionIcon ? 6 : 1))));
             items[next].focus();
         }
     });

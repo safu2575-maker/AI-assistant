@@ -1,0 +1,40 @@
+import { AgingSetup, defaultAgingBuckets, validateAging } from '../aging';
+import { settingsDate } from './settingsDate';
+import { settingsSelect } from './settingsSelect';
+import { decorateSettingsAction } from './settingsActionIcon';
+
+export function agingSettings(current:AgingSetup[]|undefined,fields:string[],measures:string[]) {
+    let items=structuredClone(current||[]), editing=-1;
+    const element=document.createElement('section');element.className='askbics-aging-settings';
+    const list=document.createElement('div'),editor=document.createElement('div'),status=document.createElement('p');
+    editor.className='askbics-aging-editor';editor.hidden=true;status.setAttribute('role','alert');
+    const action=(text:string,parent:HTMLElement,fn:()=>void)=>{const b=document.createElement('button');b.type='button';b.className='askbics-settings-action';b.textContent=text;decorateSettingsAction(b,text);b.onclick=fn;parent.append(b);return b;};
+    element.append(list);
+    const add=action('Add aging setup',element,()=>{if(!commit())return;open();});
+    element.append(editor,status);
+    const label=(text:string,help:string)=>{const l=document.createElement('div');l.className='askbics-aging-control';const caption=document.createElement('span');caption.textContent=text;caption.dataset.settingsHelp=help;l.append(caption);editor.append(l);return l;};
+    const input=(text:string,help:string,type='text')=>{const i=document.createElement('input');i.type=type;i.setAttribute('aria-label',text);label(text,help).append(i);return i;};
+    const select=(text:string,values:string[],help:string)=>{const s=document.createElement('select');s.setAttribute('aria-label',text);for(const v of values){const o=document.createElement('option');o.value=v;o.textContent=v==='detailed'?'Detailed':v==='summary'?'Summary':v||'Choose…';s.append(o);}label(text,help).append(s);const refresh=settingsSelect(s);return {s,refresh};};
+    const name=input('Aging name','Use this name in questions, for example: Show Customer aging.');
+    const basis=select('Age based on',['Due date','Posting date'],'Age is as-of date minus this date, in whole calendar days. Due date measures overdue time; posting date measures elapsed time.');
+    const date=select('Aging date field',['',...fields],'Select a real date column. Missing dates appear in Date unavailable, never as zero days.');
+    const measure=select('Outstanding amount measure',['',...measures],'Choose the model measure for outstanding balances. Historical dates require a measure that calculates balances at the selected as-of date; this feature does not reconstruct payments.');
+    const group=select('Default grouping field',['',...fields],'For example Customer or Vendor. Override in a question using: Customer aging by Vendor.');
+    const asOf=select('Model as-of date field (optional)',['',...fields],'Optional separate date column that drives the outstanding balance measure, such as a disconnected as-of date or snapshot date. Required for historical aging. Selecting an ordinary due date here is not sufficient.');
+    const calendar=settingsDate('Default as-of date');label('Default as-of date','Leave empty to use today. A fixed date requires a compatible model as-of date field.').append(calendar.element);const defaultDate=calendar.input;
+    const display=select('Aging display',['detailed','summary'],'Detailed uses each bucket. Summary combines adjacent buckets with the same summary label, recalculating in the model.');
+    const help=document.createElement('p');help.textContent='Bucket limits are inclusive. Leave the first minimum and last maximum empty. Use the same summary label to combine adjacent bands.';editor.append(help);
+    const buckets=document.createElement('div');buckets.className='askbics-aging-buckets';editor.append(buckets);
+    const bucketRows:Array<{label:HTMLInputElement;min:HTMLInputElement;max:HTMLInputElement;summary:HTMLInputElement}>=[];
+    const drawBuckets=(values: AgingSetup['buckets'])=>{buckets.replaceChildren();bucketRows.length=0;
+        const head=document.createElement('div');head.className='askbics-aging-bucket';for(const text of ['Label','From day','To day','Summary','']){const h=document.createElement('strong');h.textContent=text;head.append(h);}buckets.append(head);
+        values.forEach((v,index)=>{const row=document.createElement('div');row.className='askbics-aging-bucket';const controls={} as typeof bucketRows[number];for(const key of ['label','min','max','summary'] as const){const i=document.createElement('input');i.setAttribute('aria-label',`Bucket ${index+1} ${key}`);i.type=key==='min'||key==='max'?'number':'text';i.value=v[key]===null?'':String(v[key]);row.append(i);controls[key]=i;}bucketRows.push(controls);action('Delete',row,()=>drawBuckets(readBuckets().filter((_,i)=>i!==index)));buckets.append(row);});};
+    const readBuckets=()=>bucketRows.map(r=>({label:r.label.value.trim(),min:r.min.value===''?null:Number(r.min.value),max:r.max.value===''?null:Number(r.max.value),summary:r.summary.value.trim()}));
+    action('Add bucket',editor,()=>{if(bucketRows.length<20)drawBuckets([...readBuckets(),{label:'',min:0,max:null,summary:''}]);});
+    action('Cancel edit',editor,()=>{editor.hidden=true;editing=-1;status.textContent='';});
+    const readDraft=():AgingSetup=>({name:name.value.trim(),basis:basis.s.value as AgingSetup['basis'],dateField:date.s.value,measure:measure.s.value,group:group.s.value,asOfField:asOf.s.value,defaultDate:defaultDate.value,display:display.s.value as AgingSetup['display'],buckets:readBuckets()});
+    const commit=()=>{try{if(!editor.hidden){const next=[...items];if(editing<0)next.push(readDraft());else next[editing]=readDraft();validateAging(next,fields,measures);items=next;editor.hidden=true;editing=-1;render();}status.textContent='';return true;}catch(e){status.textContent=(e as Error).message;return false;}};
+    const open=(index=-1)=>{editing=index;const v=items[index]||{name:'',basis:'Due date',dateField:'',measure:'',group:'',asOfField:'',defaultDate:'',display:'detailed',buckets:defaultAgingBuckets()};name.value=v.name;basis.s.value=v.basis;date.s.value=v.dateField;measure.s.value=v.measure;group.s.value=v.group;asOf.s.value=v.asOfField;defaultDate.value=v.defaultDate;calendar.refresh();display.s.value=v.display;for(const x of [basis,date,measure,group,asOf,display])x.refresh();drawBuckets(v.buckets);editor.hidden=false;name.focus();};
+    const render=()=>{list.replaceChildren();items.forEach((v,index)=>{const row=document.createElement('div');row.className='askbics-synonym-entry';const text=document.createElement('div'),title=document.createElement('strong'),detail=document.createElement('span');title.textContent=v.name;detail.textContent=`${v.measure} · ${v.dateField} · ${v.buckets.length} buckets`;text.append(title,detail);row.append(text);action('Edit',row,()=>{if(commit())open(index);});action('Delete',row,()=>{items.splice(index,1);editor.hidden=true;editing=-1;render();});list.append(row);});add.disabled=false;};
+    render();return {element,read:()=>items,validate:()=>{if(!commit())return false;try{validateAging(items,fields,measures);return true;}catch(e){status.textContent=(e as Error).message;return false;}}};
+}

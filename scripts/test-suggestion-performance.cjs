@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict');
+const {performance}=require('node:perf_hooks');
+const {matchSuggestionCandidates}=require('../.tmp/test/qna/suggestionMatching');
+const compact=value=>value.toLowerCase().replace(/\s+/g,'');
+const before=(items,q,limit)=>items.filter((item,index)=>items.findIndex(other=>other.label.toLowerCase()===item.label.toLowerCase()&&other.detail===item.detail&&other.originalName===item.originalName)===index).filter(item=>compact(item.label).includes(compact(q))).sort((a,b)=>Number(compact(b.label)===compact(q))-Number(compact(a.label)===compact(q))).slice(0,limit);
+const values=Array.from({length:6000},(_,i)=>({label:`Tenant ${i}`,detail:'Assigned Tenant Name'}));
+values.push({label:'Rent ratio',detail:'Measure'},{label:'tenant 42',detail:'Assigned Tenant Name'},{label:'Tenant 42',detail:'City'},{label:'home',detail:'Assigned Tenant Name',originalName:'Home Living'},{label:'home',detail:'Assigned Tenant Name',originalName:'Home Other'});
+for(const query of ['Tenant 42','tenant','home','Rent','no match',''])assert.deepEqual(matchSuggestionCandidates(values,query,8),before(values,query,8));
+let start=performance.now();const expected=before(values,'Tenant 42',8);const oldMs=performance.now()-start;
+start=performance.now();const actual=matchSuggestionCandidates(values,'Tenant 42',8);const newMs=performance.now()-start;assert.deepEqual(actual,expected);
+console.log(`Suggestion equivalence passed; ${values.length} candidates: old ${oldMs.toFixed(1)}ms, new ${newMs.toFixed(1)}ms.`);

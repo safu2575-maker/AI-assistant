@@ -4,8 +4,14 @@ import less from 'less';
 // Canonical shared code lives in the main Power BI project. Only the host adapter is generated.
 const reference = await readFile('../src/fieldParameterTrial.ts', 'utf8');
 const method = (start, end) => { const a = reference.indexOf(start), b = reference.indexOf(end, a + start.length); if (a < 0 || b < 0) throw new Error('Shared query adapter boundary changed: update build-visual.mjs before releasing either host.'); return reference.slice(a, b); };
-const imports = `import { revenueQuestion, revenueRequest } from './revenue';
+const imports = `import { answerCashFlow } from './cashFlowQuery';
+import { answerTransactions } from './answerTransactions';
+import { expandAnswerGroups } from './answerGroups';
+import { answerAging } from './aging';
+import { compileKpis, customKpiRequest } from './customKpis';
+import { revenueQuestion, revenueRequest } from './revenue';
 import { planAnalysis, runAnalysis } from './analysisTemplates';
+import { resolveValueSynonyms } from './valueSynonyms';
 import type powerbi from 'powerbi-visuals-api';
 import type { IFilter, IFilterColumnTarget } from 'powerbi-models';
 import { indexGroupRows } from './queryPerformance';
@@ -15,6 +21,7 @@ import { normalizeMonthPeriods, recognizedTimeTerms, calendarMonths, monthIndexL
 import { modelHierarchy } from './modelFeatures';
 import { readModelMatrix } from './modelMatrix';
 import { pivotModelTable } from './modelPivot';
+import { outlineModelRows } from './modelOutline';
 import { categoricalAsTable, formatPowerBiValue } from './dataAdapter';
 import { ModelSelection, QnaResponse, QnaChartType } from './qna/types';
 import { resolveFilterTarget } from './selectionFilter';
@@ -32,7 +39,10 @@ export class VisualQueryEngine {
  async run(question: string) { return this.executeQuestion(question, true); }
  private async request(plan: ParameterPlan, config: ParameterConfig, refresh = false): Promise<QnaResponse> {
   this.requestConfig = config;
-  if (config.revenuePercentage && plan.measures.length && !plan.listOnly) return revenueRequest(plan, config, async p => this.answer(await this.transport(p, config), p), (view, p) => this.answer(view, p));
+  if (config.revenuePercentage && plan.measures.length && !plan.listOnly) return revenueRequest(plan, config, p => this.request(p, {...config,revenuePercentage:false}, refresh), (view,p) => this.answer(view,p));
+  const native=this.measures.filter(name=>!config.customKpis?.some(k=>k.name===name));
+  if(plan.measures.some(name=>config.customKpis?.some(k=>k.enabled&&k.name===name)))return customKpiRequest(plan,config,native,p=>this.request(p,config,refresh),(view,p)=>this.answer(view,p));
+
   return this.answer(await this.transport(plan, config), plan);
  }
 `;

@@ -39,6 +39,13 @@ const config = {
   ]
 };
 const plan = question => planParameterQuestion(question, config, ['Rent Measure']);
+const blankConfig={...config,fields:config.fields.map(field=>field.name==='Assigned Tenant Name'?{...field,values:['', '  ', ...field.values]}:field)};
+assert.doesNotThrow(()=>validateParameterConfig(blankConfig));
+assert.equal(planParameterQuestion('list Assigned Tenant Name',blankConfig,['Rent Measure']).filters.length,0,'blank dictionary entries must not create implicit filters');
+assert.deepEqual(planParameterQuestion('Show Rent Measure by City',blankConfig,['Rent Measure']).groups,['City']);
+assert.throws(()=>validateParameterConfig({...config,fields:[{...config.fields[0],aliases:['']}]}),/Invalid aliases/);
+assert.throws(()=>validateParameterConfig({...config,fields:[{...config.fields[0],values:[42]}]}),/Invalid values/);
+
 const defaultConfig = {...config,defaultMeasure:'Rent Measure'};
 const tenantDefaultConfig = {...defaultConfig,groupAliases:{'Sales Measure':['sales']}};
 for (const [question, measures] of [
@@ -124,6 +131,21 @@ assert.equal(normalizeMonthPeriods('City (06/07) where Tenant = Jun 26'), 'City 
 assert.equal(normalizeMonthPeriods('Rent June 26 Shop',{},['June 26 Shop']), 'Rent June 26 Shop');
 assert.throws(()=>normalizeMonthPeriods('2026/13'), /Invalid month/);
 const indexedConfig = {...config, fields:[...config.fields,{name:'MonthIndex',table:'Calendar',column:'MonthIndex',type:'number'}],time:{monthIndexField:'MonthIndex',monthIndexBase:1}};
+for(const mode of ['YTD','TTM'])for(const month of ['September','Sept','Sep','sept.']){
+ const expected=planParameterQuestion('Rent Measure '+mode+' September 2026',indexedConfig,['Rent Measure']).filters;
+ for(const period of [mode+' '+month+' 2026',month+' '+mode+' 2026',month+' 2026 '+mode,mode+' 2026 '+month,'2026 '+mode+' '+month,'2026 '+month+' '+mode]){
+  assert.deepEqual(planParameterQuestion('Rent Measure '+period,indexedConfig,['Rent Measure']).filters,expected,period);
+  assert(recognizedTimeTerms(period,indexedConfig.time).length>0,period+' highlighted');
+ }
+}
+for(const period of ['Sept year-to-date 2026','Sept year to date 2026','2026 year-to-date Sept'])assert.deepEqual(planParameterQuestion('Rent Measure '+period,indexedConfig,['Rent Measure']).filters,planParameterQuestion('Rent Measure YTD September 2026',indexedConfig,['Rent Measure']).filters);
+for(const question of ['Rent Measure 2026','2026 Rent Measure','Rent Measure year 2026','Rent Measure in 2026'])assert.deepEqual(plan(question).filters,plan('Rent Measure for 2026').filters,question);
+assert.deepEqual(recognizedTimeTerms('Rent 2026',{yearField:'Year'}),[{start:5,end:9,kind:'value'}]);
+for(const question of ['Rent 20260','Rent 2026.5','top 2026','where Unit = 2026','Unit U2026','Shop 2026'])assert.deepEqual(recognizedTimeTerms(question,{yearField:'Year'},['Shop 2026']),[],question);
+assert.deepEqual(plan('Rent Measure where Tenant = 2026').filters[0].values,['2026']);
+assert.throws(()=>plan('Rent Measure 2025 2026'),/multiple years/);
+assert.throws(()=>planParameterQuestion('Rent Measure 2026',{...config,fields:config.fields.map(f=>f.name==='City'?{...f,values:['2026']}:f)},['Rent Measure']),/Ambiguous value/);
+
 const indexedPlan = q => planParameterQuestion(q,indexedConfig,['Rent Measure']);
 assert.deepEqual(indexedPlan('Rent Measure by City June 26').filters[0].values,[24318]);
 assert.deepEqual(indexedPlan('Rent Measure by City YTD ending Jun 26').filters[0].values,[24313,24314,24315,24316,24317,24318]);
@@ -192,6 +214,31 @@ const multiPivot = pivotModelTable({ columns: ['Tenant', 'City', 'Year', 'Rent']
 assert.deepEqual(multiPivot.columns, ['Tenant', 'Riyadh · 2024', 'Riyadh · 2025']);
 assert.deepEqual(multiPivot.rows, [['A', '10', '20']]);
 assert.deepEqual(multiPivot.modelPivot.columnFields, ['City', 'Year']);
+// Indexed pivot selections must preserve the original scan order and cell context.
+for (const withSelections of [true, false]) {
+    const source = {columns:['Tenant','Month','Rent','Sales'], rows:[['A','January','10','20'],['B','February','30','40'],['A','February','50','60']], rowIndices:[[],[],[]]};
+    if (withSelections) {
+        source.modelSelections = [[{value:'A'}],[{value:'B'}],[{value:'A'}]];
+        source.modelRowSelections = [[{value:1},{value:2}],[{value:3}],[{value:4}]];
+    }
+    for (const totals of [undefined, new Map([['["A"]',['60','80']]])]) {
+        const pivot = pivotModelTable(source, 2, totals);
+        pivot.rows.forEach((row, index) => {
+            const matching = source.rows.flatMap((r, i) => r[0] === row[0] ? source.modelRowSelections?.[i] || [] : []);
+            assert.deepEqual(pivot.modelRowSelections[index], matching);
+            assert.deepEqual(pivot.modelSelections[index], source.modelSelections?.[source.rows.findIndex(r => r[0] === row[0])]?.slice(0,1) || []);
+            const cells = [matching, ...pivot.modelPivot.columnValues.flatMap(month => [0,1].map(() => source.rows.flatMap((r,i) => r[0] === row[0] && r[1] === month ? source.modelRowSelections?.[i] || [] : []))), ...(totals ? [matching, matching] : [])];
+            assert.deepEqual(pivot.modelCellSelections[index], cells);
+        });
+    }
+}
+const duplicateSource={columns:['Tenant','Month','Rent'],rows:[['A','January','1'],['A','January','2'],['A','February','3']],rowIndices:[[],[],[]],modelTotals:['Grand Total','','6']};
+const duplicateFallback=pivotModelTable(duplicateSource,2);
+assert.deepEqual(duplicateFallback.duplicateRows,[0,1]);
+assert.deepEqual(duplicateFallback.rows,duplicateSource.rows);
+assert.deepEqual(duplicateFallback.modelTotals,duplicateSource.modelTotals);
+assert.equal(duplicateFallback.modelPivot,undefined);
+
 assert.deepEqual(plan('Show Rent Measure by City and Year').groups, ['City', 'Year']);
 assert.deepEqual(plan('Show Rent Measure per Year, City').groups, ['City', 'Year']);
 assert.equal(plan('Rent Measure by Year').presentation,'table');
@@ -281,8 +328,8 @@ assert.deepEqual(hierarchy.rows,[['P','99'],['A','10'],['B','20']], 'hierarchy u
 assert.deepEqual(hierarchy.matrix.levelNames,['Parent','Child']);
 
 const elements = [];
-global.document = { createElement(tag) {
-  const e = { tag, value: '', checked: false, children: [], append(...c) { this.children.push(...c); }, insertBefore(child, before) { const index = this.children.indexOf(before); this.children.splice(index < 0 ? this.children.length : index, 0, child); }, prepend() {}, replaceChildren() { this.children = []; }, setAttribute() {}, remove() {} };
+global.document = { createElementNS(_namespace,tag) {return this.createElement(tag);}, createElement(tag) {
+  const e = { tag, value: '', checked: false, children: [], querySelector() { return null; }, append(...c) { this.children.push(...c); }, insertBefore(child, before) { const index = this.children.indexOf(before); this.children.splice(index < 0 ? this.children.length : index, 0, child); }, prepend() {}, replaceChildren() { this.children = []; }, setAttribute() {}, remove() {} };
   elements.push(e); return e;
 }, createTextNode(text) { return text; } };
 const { FieldParameterTrial } = require('../.tmp/test/fieldParameterTrial');
@@ -418,20 +465,23 @@ const { discoverParameter, parameterMetadataColumns } = require('../.tmp/test/pa
 // Settings edits remain drafts until Save; closing restores the original configuration.
 const settingsWrites = [];
 const settingsTrial = new FieldParameterTrial({prepend(){}}, {persistProperties(value){settingsWrites.push(value)},applyJsonFilter(){}});
-settingsTrial.hydrate({ metadata: { objects: { parameterTrial: { configuration: JSON.stringify(config) } } } });
+settingsTrial.hydrate({ metadata: { objects: { parameterTrial: { configuration: JSON.stringify(blankConfig) } } } });
+settingsTrial.learnedFields.set('Assigned Tenant Name',{...config.fields[0],values:['','  ','Nova Fashion']});
+assert.doesNotThrow(()=>settingsTrial.analysisDateFields(),'Settings callbacks must recover learned blank entries');
+assert(!settingsTrial.readConfig().fields.find(f=>f.name==='Assigned Tenant Name').values.some(v=>!v.trim()));
 const originalTable = settingsTrial.table.value;
-settingsTrial.mountSettings({append(){}});
+settingsTrial.mountSettings({append(){},prepend(){}});
 settingsTrial.table.value = 'Draft table'; settingsTrial.table.oninput();
 settingsTrial.automatic.checked = !settingsTrial.automatic.checked; settingsTrial.automatic.onchange();
 assert.equal(settingsWrites.length, 0, 'editing must not persist before Save');
 settingsTrial.cancelSettings();
 assert.equal(settingsTrial.table.value, originalTable, 'Cancel restores configuration');
-settingsTrial.mountSettings({append(){}});
+settingsTrial.mountSettings({append(){},prepend(){}});
 settingsTrial.mappings.value = '{bad json';
 assert.equal(settingsTrial.saveSettings(), false, 'invalid settings keep dialog open');
 assert.equal(settingsWrites.length, 0);
 settingsTrial.cancelSettings();
-settingsTrial.mountSettings({append(){}});
+settingsTrial.mountSettings({append(){},prepend(){}});
 settingsTrial.automatic.checked = !settingsTrial.automatic.checked;
 assert.equal(settingsTrial.saveSettings(), true);
 assert.equal(settingsWrites.length, 1, 'Save persists once');
@@ -441,17 +491,17 @@ const timeWrites = [];
 const timeTrial = new FieldParameterTrial({prepend(){}}, {persistProperties(value){timeWrites.push(value)},applyJsonFilter(){}});
 timeTrial.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(indexedConfig)}}}});
 assert.equal(timeTrial.timeSelectors.monthIndexField.value,'MonthIndex');
-timeTrial.mountSettings({append(){}});
+timeTrial.mountSettings({append(){},prepend(){}});
 timeTrial.timeOrder.value='year-month'; timeTrial.timeYearStart.value='1950';
 timeTrial.cancelSettings();
 assert.equal(timeTrial.readTimeSetup().monthIndexBase,1,'MonthIndex uses the fixed convention');
 assert.equal(timeTrial.timeOrder.value,'auto');
-timeTrial.mountSettings({append(){}});
+timeTrial.mountSettings({append(){},prepend(){}});
 timeTrial.timeOrder.value='month-year';
 timeTrial.timeSelectors.monthIndexField.value='';
 assert.equal(timeTrial.saveSettings(),true);
 assert.equal(JSON.parse(timeWrites[0].merge[0].properties.configuration).time.numericOrder,'month-year');
-timeTrial.mountSettings({append(){}});
+timeTrial.mountSettings({append(){},prepend(){}});
 timeTrial.timeSelectors.monthIndexField.value='MonthIndex';
 assert.equal(timeTrial.saveSettings(),true);
 assert.equal(JSON.parse(timeWrites.at(-1).merge[0].properties.configuration).time.monthIndexField,'MonthIndex','Save persists the selected MonthIndex');
@@ -463,6 +513,11 @@ timeTrial.destroy();
 const discoveredColumn = (name, parameter = 'Grouping') => ({ displayName: name, roles: {fields:true}, expr: {source:{entity:'Retail'},ref:name}, sourceFieldParameters:[{displayName:'Choose fields',expr:{source:{entity:parameter},ref:'Field label'}}] });
 assert.deepEqual(discoverParameter([discoveredColumn('Tenant'),discoveredColumn('Year')]), {table:'Grouping',column:'Field label',options:['Tenant','Year']});
 assert.equal(discoverParameter([discoveredColumn('Tenant'),discoveredColumn('Year','Other')]), undefined, 'multiple parameter sources must not be guessed');
+assert.equal(require('../.tmp/test/parameterDiscovery').discoverParameters([discoveredColumn('Tenant'),discoveredColumn('Year','Other')]).length,2);
+const manualDiscovery=Object.create(FieldParameterTrial.prototype);
+Object.assign(manualDiscovery,{mappings:{value:"[]"},learnedFields:new Map(),automatic:{checked:true},hydrated:true,autoDetected:false,table:{value:'Grouping'},column:{value:'Field label'},options:{value:'Manual'},setupSummary:{},groupingOptions(){return this.options.value.split(',').map(v=>v.trim());},readConfig(){return {};},fillOptions(){},persistConfig(){}});
+manualDiscovery.discoverSetup([discoveredColumn('Tenant'),discoveredColumn('Year','Other')]);
+assert.equal(manualDiscovery.options.value,'Manual, Tenant','manual setup still learns from the chosen parameter without switching to another source');
 assert.equal(discoverParameter([{displayName:'Year',sourceFieldParameters:[{displayName:'Parameter'}]}]), undefined);
 
 assert.deepEqual(discoverParameter([{displayName:'Revenue',isMeasure:true,roles:{measures:true},sourceFieldParameters:[{displayName:'Label',expr:{source:{entity:'Measure Choice'},ref:'Label'}}]}],true),{table:'Measure Choice',column:'Label',options:['Revenue']});
@@ -488,6 +543,33 @@ assert.deepEqual(discovered.groupingOptions(),config.options,'saved manual optio
 discovered.destroy();
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 (async () => {
+  // Exercise the full categorical matrix + marginal totals + parent outline path.
+  const outlineTrial = Object.create(FieldParameterTrial.prototype);
+  const outlineFields = ['Assigned Group','Assigned Tenant Name','Year'];
+  const outlineConfig = {enabled:true,table:'Parameter',column:'Parameter',options:outlineFields,
+    fields:outlineFields.map(name=>({name,table:'Retail',column:name}))};
+  outlineTrial.automaticEnabled=()=>true;
+  outlineTrial.readConfig=()=>({...outlineConfig});
+  outlineTrial.cancel=()=>{};
+  outlineTrial.questionRevision=0;
+  outlineTrial.measures=['Rent Measure'];
+  const outlineRequests=[];
+  outlineTrial.request=async plan=>{
+    outlineRequests.push([...plan.groups]);
+    assert.ok(plan.groups.every(name=>outlineFields.includes(name)), 'Display heading must never be requested as a model field');
+    outlineTrial.requestConfig=outlineConfig;
+    const records=plan.groups.length===3 ? [['A','One',2026,10],['A','Two',2026,20]]
+      : plan.groups.length===2 ? (plan.groups[1]==='Year' ? [['A',2026,25]] : [['A','One',10],['A','Two',20]])
+      : plan.groups.length===1 ? (plan.groups[0]==='Year' ? [[2026,30]] : [['A',25]]) : [[30]];
+    return outlineTrial.answer({metadata:{columns:[]},table:{columns:[...plan.groups.map(displayName=>({displayName,roles:{fields:true}})),{displayName:'Rent Measure',roles:{measures:true},isMeasure:true,format:'0'}],rows:records,totals:[...plan.groups.map(()=>null),30]}},plan);
+  };
+  const outlined=await outlineTrial.executeQuestion('Rent Measure by Assigned Group (P), Assigned Tenant Name (R), Year (C)');
+  assert.deepEqual(outlineRequests.slice(0,3),[outlineFields,outlineFields.slice(0,2),['Year']]);
+  assert.ok(outlined.table.matrix,'Parent expansion is applied after totals');
+  assert.deepEqual(outlined.table.modelTotals,['Grand Total','30','30']);
+  assert.deepEqual(outlined.table.rows,[['A','25','25'],['One','10','10'],['Two','20','20']], 'Parent uses model result, not sum of children');
+  const rowsOnly=await outlineTrial.executeQuestion('Rent Measure by Assigned Group (P), Assigned Tenant Name (R)');
+  assert.deepEqual(rowsOnly.table.rows,[['A','25'],['One','10'],['Two','20']]);
   const sumController = Object.create(FieldParameterTrial.prototype);
   sumController.requestConfig = config;
   const sumView = {metadata:{columns:[]},table:{
@@ -815,6 +897,18 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert.deepEqual(sparseTrial.measureOptions(),['Rent Measure'],'matrix valueSources are measures without role flags');
   sparseTrial.update({metadata:{columns:[]}});
   assert.deepEqual(sparseTrial.measureOptions(),['Rent Measure'],'an empty transient update must not erase measure discovery');
+  const splitTrial = new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
+  splitTrial.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(selectiveConfig)}}}});
+  const fieldsView = {metadata:{columns:[]},table:{columns:[discoveredColumn('City')],rows:[['Riyadh']]}};
+  const bindingView = {metadata:{columns:[{displayName:'Rent Measure',roles:{measures:true},sourceFieldParameters:[{}]}]}};
+  const splitChosen = splitTrial.selectDataView([fieldsView,bindingView]);
+  assert.deepEqual(splitChosen.table.rows, fieldsView.table.rows, 'discovery must not merge rows from different mappings');
+  splitTrial.update(splitChosen);
+  assert.deepEqual(splitTrial.measureOptions(),selectiveConfig.measureParameter.options,'measure selector catalog survives metadata delivered in another mapping');
+  assert.deepEqual(splitTrial.readConfig().measureParameter,selectiveConfig.measureParameter);
+  splitTrial.update(splitTrial.selectDataView([fieldsView]));
+  assert.deepEqual(splitTrial.measureOptions(),[],'actual measure binding removal still permits field-only lists');
+  splitTrial.destroy();
   sparseTrial.destroy();
   const {categoricalAsTable,buildContext}=require('../.tmp/test/dataAdapter');
   assert.deepEqual(categoricalAsTable({values:[{source:{displayName:'Amount'},values:[12,18],subtotal:25}]}).totals,[25],'legacy host subtotal must be read without summing cells');
@@ -824,6 +918,13 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   const directTrial = new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
   directTrial.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(selectiveConfig)}}}});
   const directView={metadata:{columns:[]},table:{columns:[discoveredColumn('City'),{displayName:'Rent Measure',isMeasure:true,roles:{measures:true}}],rows:[['Riyadh',42]],totals:[null,42]}};
+  directTrial.update(directView);
+  directTrial.queryCache.set('same-data',directView);
+  directTrial.update(JSON.parse(JSON.stringify(directView)));
+  assert.equal(directTrial.queryCache.size,0,'external refresh invalidates cached queries even when current rows match');
+  directTrial.update({...directView,table:{...directView.table,rows:[['Riyadh',99]]}});
+  assert.equal(directTrial.queryCache.size,0,'changed values invalidate cache automatically');
+  assert.equal(directTrial.discardSavedValues,true,'saved suggestion values cannot reintroduce stale values');
   directTrial.update(directView);
   assert.equal(directTrial.readConfig().measureParameter,undefined,'stale selector configuration must not override a directly dropped measure');
   assert.deepEqual(directTrial.measureOptions(),['Rent Measure']);
@@ -837,6 +938,20 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert.deepEqual(startupCalls[0].groups,['City']); assert.deepEqual(startupCalls[0].measures,['Rent Measure']);
   directTrial.startup=()=>({enabled:true,fields:['City','Year','Assigned Tenant Name','Extra'],measure:'Rent Measure'});
   directTrial.applyStartup(); assert.equal(startupCalls.length,1,'invalid startup must not issue a large query');
+  directTrial.startup=()=>({enabled:true,fields:['City'],measure:'Rent Measure'});
+  directTrial.queryCache.set('stale',directView); directTrial.completed={};
+  directTrial.learnedFields.set('City',{name:'City',table:'Retail',column:'City',values:['Old city']});
+  let resetRequest;
+  directTrial.requestBase=async(plan, config, refresh)=>{resetRequest={plan,config,refresh,reset:directTrial.resetFiltersOnRequest,latest:directTrial.latest};return {text:''};};
+  assert.equal(await directTrial.clearAndReload(),'Ready—startup data reloaded.');
+  assert.equal(directTrial.queryCache.size,0); assert.deepEqual(directTrial.learnedFields.get('City').values,[],'Clear removes cached values while retaining confirmed schema');
+  assert.equal(resetRequest.refresh,true); assert.equal(resetRequest.reset,true); assert.equal(resetRequest.latest,undefined);
+  assert.deepEqual(resetRequest.plan.groups,['City']); assert.deepEqual(resetRequest.plan.measures,['Rent Measure']);
+  assert.equal(directTrial.startupLoading,false);
+  directTrial.startup=()=>({enabled:true,fields:['Removed field'],measure:'Rent Measure'});
+  assert(directTrial.settingsHealth().some(issue=>issue.includes('Removed field')));
+
+  await assert.rejects(directTrial.clearAndReload(),/Update Startup loading mappings: Removed field/);
   directTrial.destroy();
   const mixedConfig={...selectiveConfig,directMeasures:['Fixed Measure']};
   const mixedPlan={groups:['City'],measures:['Fixed Measure','Revenue'],filters:[],summary:[]};
@@ -896,6 +1011,23 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   echoView.metadata.objects.parameterTrial.filter = [outgoingYtd];
   selectionEcho.update(echoView,[outgoingYtd]);
   assert.deepEqual(selectionEcho.latestFilters,[outgoingYtd],'owned query filter is retained even when identical to selection');
+  delete echoView.metadata.objects.general;
+  delete echoView.metadata.objects.parameterTrial.filter;
+  selectionEcho.recordOutgoingSelection([outgoingYtd]);
+  selectionEcho.update(echoView,[outgoingYtd,externalDate]);
+  assert.deepEqual(selectionEcho.latestFilters,[externalDate],'selection echo without general metadata must not block clearing; unrelated filters remain');
+  echoView.metadata.objects.parameterTrial.filter=[outgoingYtd];
+  selectionEcho.update(echoView,[outgoingYtd]);
+  assert.deepEqual(selectionEcho.latestFilters,[outgoingYtd],'tracked outgoing selection must not hide an actual owned filter');
+  delete echoView.metadata.objects.parameterTrial.filter;
+  selectionEcho.appliedFilters=[outgoingYtd];
+  selectionEcho.resetFiltersOnRequest=true;
+  const selectionRequest=selectionEcho.request({groups:['Year'],measures:['Rent Measure'],filters:[],summary:[]},config);
+  assert.equal(selectionEcho.pending.clearing,true);
+  selectionEcho.update(echoView,[outgoingYtd]);
+  assert.equal(selectionEcho.pending.clearing,false,'outgoing-only public echo allows the next request immediately');
+  selectionEcho.update(view(['Year'],[],[45]));
+  assert.equal((await selectionRequest).table.rows[0][1],'45.00');
   selectionEcho.destroy();
   const recoveryCalls=[]; const scheduled=[];
   const recovery = new FieldParameterTrial({prepend(){}},{applyJsonFilter(...args){recoveryCalls.push(args)},refreshHostData(){},persistProperties(){}});
@@ -929,11 +1061,14 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   cacheController.update(echo);
   assert.equal(cacheController.queryCache.size,1,'matching own conversation-only echo retains complete cached snapshots');
   assert.equal(cacheController.dataRevision,revisionBeforeEcho,'UI echo must not acknowledge an outstanding data query');
+  cacheController.startupNeeded=false;
   cacheController.update(JSON.parse(JSON.stringify(echo)));
+  assert.equal(cacheController.startupNeeded,false,'identical data in a fresh host object must not restart startup loading');
   assert.equal(cacheController.queryCache.size,0,'an untracked data update must still invalidate even when visible values match');
   cacheController.queryCache.set('test-snapshot',cacheView); cacheController.noteUiStateWrite('another-clear');
   const changed = view(['Year'],[],[20]); changed.metadata.objects.state={conversation:'another-clear'};
   cacheController.update(changed); assert.equal(cacheController.queryCache.size,0,'a state echo with changed data cannot retain cache');
+  assert.equal(cacheController.startupNeeded,true,'real data changes still schedule startup');
   assert.notEqual(cacheController.queryKey(selectivePlan,config),cacheController.queryKey(selectivePlan,{...config,fields:config.fields.map(field=>({...field,table:'DifferentModel'}))}),'physical mapping changes must miss the cache');
   cacheController.destroy();
   let finished = false;
@@ -1156,7 +1291,7 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   const noEchoComparison = transactional.prepareQuestion('June 2024 vs June 2025 Assigned Tenant Name Rent Measure');
   assert.equal(transactionalCalls.at(-1)[0], null);
   transactional.update(view(['Year'], [])); // acknowledge the clear, then send June 2024
-  const firstComparisonPeriod = view(['Assigned Tenant Name'], [], [12]);
+  const firstComparisonPeriod = view(['Assigned Tenant Name'], [transactional.pending.filters[0]], [12]); // parameter-only echo after acknowledged reset
   firstComparisonPeriod.categorical.values[0].source.aggregates = {subtotal:12};
   transactional.update(firstComparisonPeriod); await flush();
   assert.equal(transactionalCalls.at(-1)[0], null); // separate periods cannot reuse old data
@@ -1165,5 +1300,114 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   secondComparisonPeriod.categorical.values[0].source.aggregates = {subtotal:18};
   transactional.update(secondComparisonPeriod);
   assert.deepEqual((await noEchoComparison).table.rows[0].slice(1), ['12.00', '18.00']);
+  const parentFilters=structuredClone(transactional.appliedFilters);
+  transactional.transactionNavigation(true);
+  transactional.appliedFilters=[...parentFilters,{target:{table:'Retail',column:'Tenant'},operator:'In',values:['Temporary transaction selection']}];
+  transactional.transactionNavigation(false);
+  assert.equal(transactionalCalls.at(-1)[0],null,'Back clears transaction-owned filters before restoring the parent');
+  assert.deepEqual(transactional.pending.filters,parentFilters,'Back retains the original period and answer scope');
+  transactional.update(view(['Assigned Tenant Name'], []));
+  assert.deepEqual(transactionalCalls.at(-1)[0],parentFilters);
+  transactional.update(view(['Assigned Tenant Name'], parentFilters,[18]));
+  assert.equal(transactional.pending,undefined,'parent filter restoration completes without rerendering the answer');
   transactional.destroy();
 })().catch(error => { trial.destroy(); console.error(error); process.exitCode = 1; });
+
+// Settings metadata inspection must not trigger background query expansion.
+{
+ const inspector=new FieldParameterTrial({prepend(){}},{applyJsonFilter(){},persistProperties(){}});
+ inspector.settingsSnapshot={};inspector.pending=undefined;
+ assert.equal(inspector.canFetchMoreData(),false);
+ inspector.pending={};assert.equal(inspector.canFetchMoreData(),true,'an explicit query still needs complete results');
+ inspector.pending=undefined;inspector.settingsSnapshot=undefined;assert.equal(inspector.canFetchMoreData(),true);
+ inspector.settingsSnapshot={};inspector.startupNeeded=true;inspector.startup=()=>({enabled:true,fields:['City'],measure:'Rent'});
+ inspector.runStartup();assert.equal(inspector.startupNeeded,true,'defer startup until Settings closes');
+}
+
+{
+ const writes=[];const host={applyJsonFilter(){},persistProperties(v){writes.push(v);}};
+ const make=()=>new FieldParameterTrial({prepend(){}},host);
+ const pending=make();assert.equal(pending.automatic.checked,true,'new setup defaults On');assert.equal(pending.automaticEnabled(),false,'On does not query before discovery');
+ pending.settingsSnapshot=pending.captureSettings();pending.automatic.checked=false;assert.equal(pending.saveSettings(),true);assert.equal(writes.at(-1).merge[0].properties.automaticEnabled,false);
+ const restored=make();restored.hydrate({metadata:{columns:[],objects:{parameterTrial:{automaticEnabled:false}}}});assert.equal(restored.automatic.checked,false);
+ restored.settingsSnapshot=restored.captureSettings();restored.automatic.checked=true;assert.equal(restored.saveSettings(),true);
+ const reopened=make();reopened.hydrate({metadata:{columns:[],objects:{parameterTrial:{automaticEnabled:true}}}});assert.equal(reopened.automatic.checked,true);assert.equal(reopened.automaticEnabled(),false);
+ reopened.settingsSnapshot=reopened.captureSettings();reopened.automatic.checked=false;reopened.cancelSettings();assert.equal(reopened.automatic.checked,true,'Cancel restores preference');
+ console.log('Automatic setup defaults and preference persistence before metadata passed.');
+}
+// Multiple date mappings must have an editable selector so validation can be resolved.
+const dateChoiceWrites=[];
+const dateChoiceTrial=new FieldParameterTrial({prepend(){}},{persistProperties(v){dateChoiceWrites.push(v)},applyJsonFilter(){}});
+const dateChoiceConfig=structuredClone(indexedConfig);
+dateChoiceConfig.fields.push({name:'Calendar Date',table:'Retail',column:'Date',type:'date'},{name:'Month Start',table:'Retail',column:'MonthStart',type:'date'});
+dateChoiceConfig.time={...dateChoiceConfig.time,dateField:'Calendar Date'};
+dateChoiceTrial.hydrate({metadata:{objects:{parameterTrial:{configuration:JSON.stringify(dateChoiceConfig)}}}});
+assert.equal(dateChoiceTrial.timeSelectors.dateField.value,'Calendar Date');
+dateChoiceTrial.mountSettings({append(){},prepend(){}});
+dateChoiceTrial.timeSelectors.dateField.value='Month Start';
+assert.equal(dateChoiceTrial.saveSettings(),true);
+assert.equal(JSON.parse(dateChoiceWrites.at(-1).merge[0].properties.configuration).time.dateField,'Month Start');
+dateChoiceTrial.destroy();
+const changedBinding=Object.create(FieldParameterTrial.prototype);
+Object.assign(changedBinding,{mappings:{value:"[]"},automatic:{checked:true},queryCache:new Map(),learnedFields:new Map(),hydrated:true,autoDetected:true,table:{value:'Old Parameter'},column:{value:'Field label'},options:{value:'Tenant, Year'},setupSummary:{},groupingOptions(){return this.options.value.split(',').map(v=>v.trim());},readConfig(){return {};},fillOptions(){},persistConfig(){}});
+changedBinding.discoverSetup([discoveredColumn('Document Number','Reversal Test Fields')]);
+assert.equal(changedBinding.table.value,'Reversal Test Fields');
+assert.equal(changedBinding.options.value,'Document Number','switching parameter must not retain old grouping options');
+changedBinding.discoverSetup([]);
+assert.equal(changedBinding.table.value,'Reversal Test Fields','missing metadata must not invent a new source');
+changedBinding.pending={};
+changedBinding.discoverSetup([discoveredColumn('Tenant','Old Parameter')]);
+assert.equal(changedBinding.table.value,'Reversal Test Fields','pending requests must not switch source');
+changedBinding.mappings={value:JSON.stringify([{name:'Tenant',table:'Retail',column:'Tenant',type:'text'},{name:'Document Number',table:'Reversal',column:'Document Number',type:'text'}])};
+assert.deepEqual(changedBinding.mappedFields().map(f=>f.name),['Document Number'],'active source hides stale saved mappings');
+changedBinding.bindingIssue='Unresolved changed binding';
+assert.deepEqual(changedBinding.mappedFields(),[],'unresolved changed binding hides stale settings fields');
+assert.deepEqual(FieldParameterTrial.prototype.groupingOptions,undefined); // groupingOptions is an instance arrow function
+const catalogTrial=Object.create(FieldParameterTrial.prototype);
+Object.assign(catalogTrial,{table:{value:'Parameter'},column:{value:'Parameter'},mappedFields(){return [{name:'Assigned Group',table:'Retail',column:'Assigned Group',type:'text'},{name:'Document Number',table:'ReversalTest',column:'Document Number',type:'text'}];}});
+catalogTrial.latest={metadata:{columns:[{displayName:'Document Number',roles:{fields:true},expr:{source:{entity:'ReversalTest'},ref:'Document Number'}}]}};
+assert.deepEqual(catalogTrial.currentCatalogFields().map(f=>f.name),['Document Number'],'catalogue excludes saved fields outside current binding');
+catalogTrial.latest={metadata:{columns:[{displayName:'Test Amount',isMeasure:true}]}};
+assert.deepEqual(catalogTrial.currentCatalogFields(),[],'measure-only metadata does not confirm saved field mappings');
+const metadataOnlyTrial=new FieldParameterTrial({prepend(){}},{persistProperties(){},applyJsonFilter(){throw new Error('Metadata discovery must not issue queries');}});
+const reversalCols=['Transaction ID','Document Number','Reversed Document Number'].map(name=>({...discoveredColumn(name,'Reversal Test Fields'),expr:{source:{entity:'ReversalTest'},ref:name}}));
+metadataOnlyTrial.update({metadata:{columns:[...reversalCols,{displayName:'Test Amount',roles:{measures:true},isMeasure:true}]},table:{columns:[reversalCols[0],{displayName:'Test Amount',roles:{measures:true},isMeasure:true}],rows:[['T1',1000]]}});
+assert.deepEqual(metadataOnlyTrial.groupingOptions(),['Transaction ID','Document Number','Reversed Document Number']);
+assert.ok(metadataOnlyTrial.mappedFields().some(f=>f.name==='Document Number'&&f.table==='ReversalTest'),'learn unprojected schema from metadata');
+assert.deepEqual(metadataOnlyTrial.measureOptions(),['Test Amount']);
+assert.equal(metadataOnlyTrial.readConfig().table,'Reversal Test Fields');
+metadataOnlyTrial.destroy();
+assert.equal(require('../capabilities.json').keepAllMetadataColumns,true);
+const switchedMeasure=new FieldParameterTrial({prepend(){}},{persistProperties(){},applyJsonFilter(){throw new Error('Discovery must not query');}});
+switchedMeasure.measureTable.value='Old Measures';switchedMeasure.measureColumn.value='Old Label';switchedMeasure.measureLabels.value='Rent Measure';
+const newMeasure={displayName:'Waterfall Amount',isMeasure:true,roles:{measures:true},type:{numeric:true},sourceFieldParameters:[{displayName:'Waterfall Measures',expr:{source:{entity:'Waterfall Measures'},ref:'Waterfall Measures'}}]};
+switchedMeasure.update({metadata:{columns:[newMeasure]},table:{columns:[newMeasure],rows:[[100]]}});
+assert.deepEqual(switchedMeasure.measureOptions(),['Waterfall Amount'],'new measure parameter replaces stale labels');
+assert.equal(switchedMeasure.measureTable.value,'Waterfall Measures');
+switchedMeasure.destroy();
+// Reproduce Waterfall metadata with two date columns: discovery must survive
+// the actionable calendar validation error and keep both selectors populated.
+const waterfallDiscovery=new FieldParameterTrial({prepend(){}},{persistProperties(){},applyJsonFilter(){throw new Error('Discovery must not query');}});
+const wfNames=['Waterfall Step','Month','City','MonthIndex','Year','Date'];
+const wfCols=wfNames.map(name=>({...discoveredColumn(name,'Waterfall Fields'),expr:{source:{entity:'Waterfall'},ref:name},type:['Month','Date'].includes(name)?{dateTime:true}:['Year','MonthIndex'].includes(name)?{numeric:true}:{text:true}}));
+waterfallDiscovery.mappings.value=JSON.stringify([{name:'City',table:'OldRetail',column:'City',type:'text',values:['Old city']}]);
+assert.doesNotThrow(()=>waterfallDiscovery.update({metadata:{columns:[...wfCols,newMeasure]},table:{columns:[...wfCols,newMeasure],rows:[]}}));
+assert.deepEqual(waterfallDiscovery.availableFields(),['City',...wfNames.filter(n=>n!=='City')]);
+assert.equal(waterfallDiscovery.mappedFields().find(f=>f.name==='City').table,'Waterfall');
+assert.ok(!waterfallDiscovery.mappedFields().find(f=>f.name==='City').values.includes('Old city'));
+assert.deepEqual(waterfallDiscovery.measureOptions(),['Waterfall Amount']);
+assert.throws(()=>waterfallDiscovery.readConfig(),/calendar date field/,'query validation remains enforced');
+waterfallDiscovery.timeSelectors.dateField.value='Date';
+assert.equal(waterfallDiscovery.readConfig().fields.length,6);
+waterfallDiscovery.destroy();
+// Partial metadata must not erase valid parameter discovery from other columns.
+assert.deepEqual(discoverParameter([discoveredColumn('Tenant'),{displayName:'Unresolved',roles:{fields:true},sourceFieldParameters:[{displayName:'Grouping'}]}]),{table:'Grouping',column:'Field label',options:['Tenant']});
+const projectionTrial=new FieldParameterTrial({prepend(){}},{persistProperties(){},applyJsonFilter(){}});
+const projectionField=discoveredColumn('Tenant');
+projectionTrial.update({metadata:{columns:[projectionField,newMeasure]},table:{columns:[projectionField,newMeasure],rows:[['A',1]]}});
+assert.deepEqual(projectionTrial.availableFields(),['Tenant']);
+projectionTrial.update({metadata:{columns:[newMeasure]},table:{columns:[newMeasure],rows:[[1]]}});
+assert.deepEqual(projectionTrial.availableFields(),['Tenant'],'scalar results must retain host-confirmed fields');
+projectionTrial.update({metadata:{columns:[{displayName:'Foreign',roles:{fields:true},expr:{source:{entity:'Other'},ref:'Foreign'}}]},table:{columns:[],rows:[]}});
+assert.deepEqual(projectionTrial.availableFields(),[],'an actual foreign binding still quarantines old fields');
+projectionTrial.destroy();

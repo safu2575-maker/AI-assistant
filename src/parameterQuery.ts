@@ -1,6 +1,11 @@
+import { filterShortcuts } from "./filterShortcuts";
+import { fieldLayout } from "./fieldLayout";
+import { extractBlankFilters } from "./blankFilters";
+import { applyAlwaysFilter } from "./alwaysFilter";
+import { expandAnswerGroups } from "./answerGroups";
 import { QnaChartType } from "./qna/types";
 import { timeFieldOrder } from "./qna/timeLayout";
-import { TimeSetup, monthIndexValues, normalizeMonthPeriods } from "./timeSetup";
+import { TimeSetup, monthIndexValues, normalizeMonthPeriods, standaloneYearTerms } from "./timeSetup";
 import { AdvancedFilter, BasicFilter, IFilter, TupleFilter } from "powerbi-models";
 
 export interface ModelField {
@@ -12,6 +17,11 @@ export interface ModelField {
     values?: string[];
 }
 export interface ParameterConfig {
+    answerGroups?: import("./answerGroups").AnswerGroup[];
+    customKpis?: import("./customKpis").CustomKpi[];
+    aging?: import("./aging").AgingSetup[];
+    valueSynonyms?: import("./valueSynonyms").ValueSynonym[];
+    alwaysFilter?: import("./alwaysFilter").AlwaysFilter;
     analysis?: import("./analysisTemplates").AnalysisSettings;
     table: string;
     column: string;
@@ -29,6 +39,12 @@ export interface ParameterConfig {
     time?: TimeSetup;
 }
 export interface ParameterPlan {
+    cashFlowData?: boolean;
+    cashFlowRowLimit?: number;
+    summaryCard?: boolean;
+    transactionRuleProbe?: boolean;
+    transactionRuleData?: boolean;
+    transactionRuleEmpty?: boolean;
     groups: string[];
     measures: string[];
     filters: IFilter[];
@@ -36,6 +52,7 @@ export interface ParameterPlan {
     presentation?: "table" | "matrix" | QnaChartType;
     rank?: { count: number; ascending: boolean };
     matrixRowCount?: number;
+    explicitParent?: boolean;
     totalOnly?: boolean;
     listOnly?: boolean;
 }
@@ -63,7 +80,9 @@ export function validateParameterConfig(config: ParameterConfig): void {
     for (const field of config.fields) {
         if (!field || typeof field.name !== "string" || !field.name.trim() || typeof field.table !== "string" || !field.table.trim() || typeof field.column !== "string" || !field.column.trim()) throw new Error("Each mapped field needs a name, table and column.");
         if (field.type && !["text", "number", "date"].includes(field.type)) throw new Error(`Invalid type for ${field.name}.`);
-        for (const entries of [field.aliases, field.values]) if (entries && (!Array.isArray(entries) || entries.some(value => typeof value !== "string" || !value.trim()))) throw new Error(`Invalid aliases or values for ${field.name}.`);
+        if (field.aliases && (!Array.isArray(field.aliases) || field.aliases.some(value => typeof value !== "string" || !value.trim()))) throw new Error(`Invalid aliases for ${field.name}.`);
+        // Blank members are valid data, but cannot be matched as question keywords.
+        if (field.values && (!Array.isArray(field.values) || field.values.some(value => typeof value !== "string"))) throw new Error(`Invalid values for ${field.name}.`);
         for (const alias of new Set([field.name, ...(field.aliases || [])].map(normalizeParameterName))) {
             if (aliases.has(alias)) throw new Error(`Ambiguous field alias: ${alias}.`);
             aliases.add(alias);
@@ -86,13 +105,15 @@ export function validateParameterConfig(config: ParameterConfig): void {
 
 /** Conservative grammar: unrecognized text fails instead of broadening a query. */
 export function planParameterQuestion(question: string, config: ParameterConfig, availableMeasures: string[]): ParameterPlan {
+    question = expandAnswerGroups(question, config.answerGroups);
     validateParameterConfig(config);
+    config = {...config, fields: config.fields.map(field => ({...field, values: field.values?.filter(value => value.trim())}))};
     let text = normalizeMonthPeriods(question, config.time, [...availableMeasures, ...config.fields.flatMap(field => [field.name, ...(field.aliases || []), ...(field.type !== "date" ? field.values || [] : [])])]).trim().replace(/[.!?]+$/, "");
     const scopeMatch = /;\s*modelScope:\s*(\S+)\s*$/i.exec(text);
     const scope: { start: string; end: string } | undefined = scopeMatch ? JSON.parse(decodeURIComponent(scopeMatch[1])) : undefined;
     if (scopeMatch) text = text.slice(0, scopeMatch.index);
     const encodedFilters = /;\s*answerFilters:\s*(.*)$/i.exec(text);
-    let editorFilters: Array<{ field: string; values: string[] }> = [];
+    let editorFilters: Array<{ field: string; values: string[]; group?:boolean }> = [];
     if (encodedFilters) {
         editorFilters = JSON.parse(decodeURIComponent(encodedFilters[1]));
         if (!Array.isArray(editorFilters) || editorFilters.some(item => typeof item.field !== "string" || !Array.isArray(item.values) || item.values.some(value => typeof value !== "string"))) throw new Error("Invalid editor filters.");
@@ -100,6 +121,8 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
     }
     const editor = /^(Table|Matrix);\s*rows:\s*([^;]*);\s*columns:\s*([^;]*);\s*values:\s*([^;]*)$/i.exec(text);
     if (editor) text = `${editor[2]} ${editor[3]} ${editor[4]} as a ${editor[1].toLowerCase()}`;
+    text=filterShortcuts(text,config);
+    const layout=fieldLayout(text,config);text=layout.text;
     const plan: ParameterPlan = { groups: [], measures: [], filters: [], summary: [] };
     // Tolerate repeated presentation connectors without dropping arbitrary words
     // or interpreting presentation phrases inside explicit filter values.
@@ -129,11 +152,13 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
         plan.filters.push(new BasicFilter({ table: field.table, column: field.column }, "In", typed).toJSON());
         plan.summary.push(`${field.name}: ${values.join(" or ")}`);
     };
-    for (const item of editorFilters) {
+    for (const item of editorFilters.filter(item=>!item.group)) {
         const field = fieldFor(item.field);
         if (!field) throw new Error(`Configure the model mapping for ${item.field}.`);
         if (item.values.length) addValues(field, item.values);
     }
+    const blanks=extractBlankFilters(text,config);text=blanks.text;
+    plan.filters.push(...blanks.filters);plan.summary.push(...blanks.summary);
     // Explicit filters are intentionally independent of currently loaded values.
     const where = text.match(/\b(?:where|with)\s+(.+)$/i);
     if (where) {
@@ -141,7 +166,7 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
         const clauses = where[1].split(/;|\s+and\s+(?=[^=;]+\s*=)/i);
         for (const clause of clauses) {
             const parts = clause.match(/^\s*(.+?)\s*=\s*(.+?)\s*$/);
-            if (!parts) throw new Error("Use filters such as where Tenant = Home Living; City = Riyadh.");
+            if (!parts) throw new Error("Use the filter format: where <field name> = <value>. Replace the placeholders with names and values from your data. Separate additional filters with a semicolon.");
             const field = fieldFor(parts[1]);
             if (!field) throw new Error(`Configure the model mapping for ${parts[1]}.`);
             const values = parts[2].split("|").map(value => value.trim().replace(/^"(.*)"$/, "$1"));
@@ -220,9 +245,14 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
             }
         }
     } else {
-        const year = /\b(?:for|in|during|of)\s+(\d{4})\b/i.exec(text);
+        const explicitYear = /\b(?:for|in|during|of|year)\s+(\d{4})\b/i.exec(text);
+        const bareYears = standaloneYearTerms(text, config.fields.flatMap(field=>[field.name,...(field.aliases||[]),...(field.values||[])]));
+        if (!explicitYear && bareYears.length>1) throw new Error('Use an explicit comparison or a Year filter for multiple years.');
+        const bareYear = bareYears[0];
+        const year = explicitYear || (bareYear ? [text.slice(bareYear.start,bareYear.end),text.slice(bareYear.start,bareYear.end)] : undefined);
         if (period) throw new Error("YTD and TTM need an end month, for example TTM ending June 2025.");
         if (year) {
+            if (!explicitYear && config.fields.some(field=>field!==yearField && field.values?.includes(year[1]))) throw new Error(`Ambiguous value ${year[1]}; use Year ${year[1]} or an explicit field filter.`);
             const number = Number(year[1]);
             if (number < 1900 || number > 9998) throw new Error("Choose a year between 1900 and 9998.");
             const mappedYear = yearField;
@@ -277,7 +307,7 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
         .replace(/\b(?:i would like to see|i would like|i want to see|i want|can you|could you|would you|will you|let me see|show me|give me|tell me|and also)\b/gi, " ")
         .replace(/\b(?:shw|shwo|sho|shwoing|showing|dispaly|disply|comapre|compar|plese|pleae|pls|plz|kindly|also)\b/gi, " ")
         .replace(/\b(list of|list|show|compare|display|give|me|please|the|total|for|in|during|ending|as of|and|as a table|as table|grouped by|group by|by|per)\b/gi, " ").replace(/[,>&]/g, " ").trim();
-    if (remaining) throw new Error(`Could not safely interpret “${remaining}”. Use mapped field names and explicit filters (where Tenant = Home Living).`);
+    if (remaining) throw new Error(`Could not safely interpret “${remaining}”. Use field and measure names available in this report. For filters, use where <field name> = <value>, replacing the placeholders with your data.`);
     if (!plan.groups.length) {
         if (plan.listOnly) throw new Error("Choose a field to list.");
         if (plan.rank) throw new Error("Choose a field to rank, for example top 5 tenants by Rent Measure.");
@@ -316,7 +346,23 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
             if (categories.length) plan.matrixRowCount = categories.length;
         }
     }
-    return plan;
+    if(layout.roles.size){
+        if(editor||presentation&&plan.presentation!=='matrix')throw new Error('Row, column and parent instructions require a matrix. Remove the conflicting presentation.');
+        for(const name of layout.roles.keys())if(!plan.groups.includes(name))throw new Error('Use layout instructions on grouping fields, not filtered values: '+name);
+        const parents=plan.groups.filter(n=>layout.roles.get(n)==='parent');
+        const rows=plan.groups.filter(n=>layout.roles.get(n)!=='parent'&&layout.roles.get(n)!=='column');
+        const columns=plan.groups.filter(n=>layout.roles.get(n)==='column');
+        if(parents.length&&!rows.length)throw new Error('Choose a child row field after the parent.');
+        if(!parents.length&&!rows.length)throw new Error('Choose at least one row field for the matrix.');
+        plan.groups=[...parents,...rows,...columns];plan.matrixRowCount=parents.length+rows.length;plan.presentation='matrix';plan.explicitParent=!!parents.length;
+    }
+    let filteredPlan = plan;
+    for (const rule of editorFilters.filter(item=>item.group && item.values.length)) {
+        try { filteredPlan = applyAlwaysFilter(filteredPlan,{...config,alwaysFilter:rule}); }
+        catch(error) { throw new Error(String((error as Error).message).replace(/Always filter/g,"Group filter")); }
+        filteredPlan.summary.push(`${rule.field}: ${rule.values.join(" or ")} (group filter)`);
+    }
+    return filteredPlan;
 }
 
 export function selectedParameterMeasures(plan: ParameterPlan, config: ParameterConfig): string[] {

@@ -51,6 +51,12 @@
               "selfFilter": true
             }
           }
+        },
+        "automaticEnabled": {
+          "displayName": "Automatic data setup",
+          "type": {
+            "bool": true
+          }
         }
       }
     },
@@ -154,6 +160,7 @@
       "essential": false
     }
   ],
+  "keepAllMetadataColumns": true,
   "supportsHighlight": true,
   "supportsMultiVisualSelection": true,
   "supportsEmptyDataView": true,

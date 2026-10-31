@@ -4,7 +4,10 @@ export interface PdfReport { title: string; orientation?: "landscape" | "portrai
 export interface PdfPreview { pages: string[]; base64: string; }
 
 /** Canvas pages preserve the report's Unicode labels without remote font requests. */
-export async function createPdfReport(report: PdfReport): Promise<PdfPreview> {
+export async function createPdfReport(report: PdfReport, onPage?: (page: string, index: number) => void, cancelled: () => boolean = () => false): Promise<PdfPreview> {
+    const checkCancelled = () => { if (cancelled()) throw new Error("PDF preview closed."); };
+    await new Promise<void>(resolve=>setTimeout(resolve,0));
+    checkCancelled();
     const orientation = report.orientation || "landscape";
     const width = orientation === "portrait" ? 792 : 1120, height = orientation === "portrait" ? 1120 : 792, margin = 36;
     const pdf = new jsPDF({orientation,unit:"pt",format:"a4",compress:true});
@@ -13,6 +16,7 @@ export async function createPdfReport(report: PdfReport): Promise<PdfPreview> {
     const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("PDF rendering is unavailable.");
     ctx.scale(2,2);
     const wrap = (text: string, max: number): string[] => {
+        if (!text.includes('\n') && ctx.measureText(text).width <= max) return [text];
         const result: string[]=[]; let line="";
         for(const char of String(text)) { if(char==='\n' || (line && ctx.measureText(line+char).width>max)){result.push(line);line=char==='\n'?'':char;}else line+=char; }
         result.push(line); return result;
@@ -30,12 +34,15 @@ export async function createPdfReport(report: PdfReport): Promise<PdfPreview> {
         return y+12;
     };
     const finish = async () => {
+        checkCancelled();
         if(pages.length>=100)throw new Error("This report exceeds 100 PDF pages. Narrow the filters and export again.");
         ctx.fillStyle="#64748b";ctx.font="11px Arial";ctx.fillText(`Page ${pages.length+1} · ${new Date().toLocaleString()}`,margin,height-20);
         const page=canvas.toDataURL("image/jpeg",.92);pages.push(page);
+        onPage?.(page,pages.length-1);
         if(pages.length>1)pdf.addPage();
         pdf.addImage(page,"JPEG",0,0,pdf.internal.pageSize.getWidth(),pdf.internal.pageSize.getHeight());
         await new Promise<void>(resolve=>setTimeout(resolve,0));
+        checkCancelled();
     };
     if(report.chart){
         const url=URL.createObjectURL(report.chart);

@@ -7,6 +7,9 @@ const parse=question=>planAnalysis(question,config,['Rent','Average Rent']);
 assert.equal(parse('Rent by Group for June 2026'),undefined,'ordinary questions unchanged');
 assert.equal(planAnalysis('Explain Rent for June 2026',{...config,analysis:{draft:definition}},['Rent']),undefined,'draft is not active');
 assert.equal(parse('Explain Rent for June 2026').mode,'breakdown');
+assert.equal(planAnalysis('Explain Rent for June 2026',config,['Rent','Rent Variance','Annual Change']).mode,'breakdown','unrelated model names must not block Explain');
+assert.equal(planAnalysis('Rent Variance for June 2026',config,['Rent','Rent Variance']),undefined,'a keyword inside a measure name is not an analysis instruction');
+assert.equal(planAnalysis('Explain Rent Variance for June 2026',config,['Rent','Rent Variance']).mode,'breakdown','explicit Explain works with a keyword-bearing measure');
 assert.equal(parse('Explain Rent variance for June 2026').comparison,'June 2025');
 assert.equal(parse('Rent variance June 2026 versus May 2026').comparison,'May 2026','explicit comparison wins');
 assert.equal(parse('Explain Rent June 2026 versus June 2025').mode,'variance','an explicit comparison must not be ignored in an explain question');
@@ -99,6 +102,14 @@ const load=async plan=>{
   assert(section.answer.table.rows.some(row=>row[0]==='Unassigned'));
   assert(section.answer.analysis.blankRows.every(index=>section.answer.table.rows[index][0]==='Unassigned'));
   assert(section.answer.table.rows.some(row=>row[0]==='New'),'retain zero-to-value changes');
+  const full=section.answer.analysis.includingBlanks;
+  assert.equal(full.table.rows.length,5);
+  assert(full.table.rows.some(row=>row[0]==='Zero'));
+  assert.deepEqual(full.table.modelTotals,section.answer.table.modelTotals);
+  assert.deepEqual(full.table.columns,section.answer.table.columns);
+  assert.equal(full.blankRows.length,1);
+  assert.equal(full.table.rows.find(row=>row[0]==='Cost').at(-2),'20.00%');
+  assert.equal(planAnalysis(full.rowQuestions[full.blankRows[0]],modernConfig,['Rent']).selections.at(-1).blank,true);
   const cost=section.answer.table.rows.find(row=>row[0]==='Cost');
   assert.equal(cost.at(-2),'20.00%');assert.equal(cost.at(-1),'20.00%');
  }
@@ -135,7 +146,7 @@ const load=async plan=>{
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 (async()=>{
- const transactionFields=['Document ID','Posting Date','Description','Account'];
+ const transactionFields=['Document ID','Posting Date','Description','Account',...Array.from({length:6},(_,i)=>'Detail '+(i+5))];
  const extra=transactionFields.map(name=>({name,table:'Data',column:name,type:'text'}));
  const cfg={...config,options:[...config.options,...transactionFields],fields:[...fields,...extra],analysis:{published:{...definition,consolidated:true,transactionFields}}};
  const {analysisDimensions}=require('../.tmp/test/analysisTemplates');
@@ -149,21 +160,42 @@ const load=async plan=>{
   assert.deepEqual(plan.groups,transactionFields);
   assert(plan.filters.some(f=>f.target.column==='Property'&&f.values.includes('Mall')));
   assert(plan.filters.some(f=>f.target.column==='Group'&&f.values.join(',')==='A,B'),'Others uses its members');
-  return {text:'',table:{columns:[...transactionFields,'Rent'],rows:[['INV1','2026-06-01','Entry','Rent','42']],rowIndices:[[]]}};
+  return {text:'',table:{columns:[...transactionFields,'Rent'],rows:[[...transactionFields.map((_,i)=>'Value '+i),'42']],rowIndices:[[]],modelTotals:['Grand Total',...transactionFields.slice(1).map(()=>''),'84']}};
  });
  assert.equal(requests.length,2,'only two transaction requests for both periods; no dimension scan');
  assert.equal(answer.table.rows.length,2);
+ assert.equal(answer.transactionTables.length,2);
+ assert.equal(answer.transactionTables[0].table.modelTotals.at(-1),'84','use model total, not visible row sum');
+ assert.equal(answer.transactionTables[1].table.modelTotals.at(-1),'84');
  assert.deepEqual(answer.table.rows.map(row=>row[0]),['June 2026','June 2025']);
  requests.length=0;
  await runAnalysis({...validated,transactions:'comparison'},cfg,['Rent'],async plan=>{requests.push(plan);return {text:'',table:{columns:[],rows:[],rowIndices:[]}};});
-  assert.equal(requests.length,1);
+  assert.equal(requests.length,2,'fetch scalar total when detail response has no total');
  await runAnalysis({...validated,transactions:'current',selections:[{field:'Group',values:['—'],blank:true}]},cfg,['Rent'],async plan=>{
   assert.deepEqual(plan.filters.find(f=>f.target.column==='Group').values,[null],'blank members must not become literal dash values');
   return {text:'',table:{columns:[],rows:[],rowIndices:[]}};
  });
  assert.equal(requests[0].filters.find(f=>f.target.column==='MonthIndex').values[0],2025*12+6);
- await assert.rejects(()=>runAnalysis(detailState,{...cfg,analysis:{published:{...cfg.analysis.published,transactionFields:[]}}},['Rent'],async()=>{throw new Error('must not query')}),/one to four/);
+ await assert.rejects(()=>runAnalysis(detailState,{...cfg,analysis:{published:{...cfg.analysis.published,transactionFields:[]}}},['Rent'],async()=>{throw new Error('must not query')}),/one to ten/);
  assert.throws(()=>planAnalysis(analysisQuestion({...detailState,transactions:'bad'}),cfg,['Rent']),/no longer matches/);
+ const summaryState=planAnalysis(analysisQuestion({...detailState,summarizeBy:'Property'}),cfg,['Rent']);
+ const summaryPlans=[];
+ await runAnalysis(summaryState,cfg,['Rent'],async plan=>{summaryPlans.push(plan);return {text:'',table:{columns:['Property','Rent'],rows:[],rowIndices:[],modelTotals:['Grand Total','0']}};});
+ let comparisonCalls=0;
+ const combined=await runAnalysis(summaryState,cfg,['Rent'],async()=>{
+  const current=comparisonCalls++===0;
+  return {text:'',table:{columns:['Property','Rent'],rows:current?[['Mall','120'],['New','5']]:[['Mall','100'],['Old','8']],rowIndices:[[],[]],modelRawRows:current?[[null,120],[null,5]]:[[null,100],[null,8]],modelTotals:['Grand Total',current?'200':'150'],modelRawTotals:[null,current?200:150]}};
+ });
+ assert.equal(combined.transactionTables,undefined,'comparison summary renders one table');
+ assert.deepEqual(combined.table.columns,['Property','June 2026','June 2025','Variance','Variance %']);
+ assert.deepEqual(combined.table.rows[0],['Mall','120','100','20','20.00%']);
+ assert.deepEqual(combined.table.rows[1],['New','5','—','—','—']);
+ assert.deepEqual(combined.table.rows[2],['Old','—','8','—','—']);
+ assert.deepEqual(combined.table.modelTotals,['Grand Total','200','150','50','33.33%'],'variance uses model totals, not row sums');
+ assert.equal(summaryPlans.length,2);
+ assert(summaryPlans.every(plan=>plan.groups.length===1&&plan.groups[0]==='Property'));
+ assert(summaryPlans.every(plan=>plan.filters.some(f=>f.target.column==='Group'&&f.values.includes('A'))));
+ assert.throws(()=>planAnalysis(analysisQuestion({...detailState,summarizeBy:'Missing'}),cfg,['Rent']),/no longer matches/);
  console.log('On-demand transactions, configured fields, period scope and member filters passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
@@ -190,12 +222,64 @@ const load=async plan=>{
  assert.equal(table.rows.find(row=>row[0]==='Unassigned')[col],'4.00%','hidden blank remains in denominator');
  assert.equal(table.modelTotals[col],'100.00%');
  assert.equal(answer.table.modelTotals[col],'—','overall has no dimension-specific denominator');
- assert.equal(calls,2,'Impact requires no additional model queries');
+ const full=answer.analysis.sections[0].answer.analysis.includingBlanks;
+ assert.equal(full.table.rows.length,records.length,'complete table bypasses Top 5 and hide unchanged');
+ assert(!full.table.rows.some(row=>row[0]==='Others'));
+ assert(full.table.rows.some(row=>row[0]==='H'));
+ assert.deepEqual(full.table.modelTotals,table.modelTotals);
+ assert.equal(full.table.rows.find(row=>row[0]==='A')[col],'40.00%');
+ assert.equal(planAnalysis(full.rowQuestions[0],cfg,['Rent']).top,state.top,'drilling preserves the main answer ranking preference');
+ assert.equal(calls,2,'complete blank sections reuse model results without extra queries');
  const filtered=await runAnalysis({...state,selections:[{field:'Group',values:['A','B']}]},cfg,['Rent'],loader());
  assert.equal(filtered.analysis.sections[0].answer.table.rows.find(row=>row[0]==='A')[col],'62.50%');
+ assert.equal(filtered.analysis.sections[0].answer.analysis.includingBlanks,undefined);
  const zero=await runAnalysis(state,{...cfg,analysis:{published:{...cfg.analysis.published,hideUnchanged:false}}},['Rent'],loader('zero'));
  assert.equal(zero.analysis.sections[0].answer.table.rows[0][col],'—');
  const missing=await runAnalysis(state,cfg,['Rent'],loader('missing'));
  assert(missing.analysis.sections[0].answer.table.rows.every(row=>row[col]==='—'),'unknown movement cannot yield misleading percentages');
  console.log('Impact percentages: absolute movement, offsetting Others, hidden blanks, filters, zero and missing data passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+{
+ const {applyAlwaysFilter}=require('../.tmp/test/alwaysFilter');
+ const cfg={...config,alwaysFilter:{field:'Group',values:['A','B']}};
+ const base={groups:['Tenant'],measures:['Rent'],filters:[],summary:[]};
+ assert.deepEqual(applyAlwaysFilter(base,cfg).filters[0].values,['A','B']);
+ const narrowed={...base,filters:[{target:{table:'Data',column:'Group'},operator:'In',values:['B','C']}]};
+ assert.deepEqual(applyAlwaysFilter(narrowed,cfg).filters[0].values,['B']);
+ assert.deepEqual(applyAlwaysFilter(applyAlwaysFilter(narrowed,cfg),cfg),applyAlwaysFilter(narrowed,cfg));
+ assert.throws(()=>applyAlwaysFilter({...base,filters:[{target:{table:'Data',column:'Group'},operator:'In',values:['C']}]},cfg),/conflicts/);
+ assert.throws(()=>applyAlwaysFilter(base,{...cfg,alwaysFilter:{field:'Missing',values:['A']}}),/unavailable/);
+ assert.throws(()=>applyAlwaysFilter(base,{...cfg,alwaysFilter:{field:'Group',values:[]}}),/incomplete/);
+ console.log('Always filter: narrowing, conflict, missing mapping and idempotence passed.');
+}
+
+{
+ const {resolveValueSynonyms}=require('../.tmp/test/valueSynonyms');
+ const rules=[{field:'Tenant',value:'Home Living',aliases:['home','HL']}];
+ const resolve=q=>resolveValueSynonyms(q,rules,fields,['Rent']);
+ assert.equal(resolve('Rent for home for June 2026'),'Rent for      for June 2026 where Tenant = Home Living');
+ const question=resolve('Rent home for June 2026');
+ const plan=require('../.tmp/test/parameterQuery').planParameterQuestion(question,config,['Rent']);
+ assert.ok(plan.filters.some(f=>f.target.column==='Tenant'&&f.values.includes('Home Living')));
+ assert.equal(resolve('Rent Home Living for June 2026'),'Rent Home Living for June 2026');
+ assert.match(resolve('Rent where Tenant = HL'),/Tenant = Home Living/);
+ assert.equal(resolveValueSynonyms('Rent home',rules.map(r=>({...r,enabled:false})),fields,['Rent']),'Rent home');
+ const ambiguous=[...rules,{field:'Category',value:'Home Goods',aliases:['home']}];
+ assert.throws(()=>resolveValueSynonyms('Rent home',ambiguous,fields,['Rent']),/Ambiguous/);
+ assert.match(resolveValueSynonyms('Rent where Tenant = home',ambiguous,fields,['Rent']),/Tenant = Home Living/);
+ assert.equal(resolveValueSynonyms('Home Rent',rules,fields,['Home Rent']),'Home Rent');
+ console.log('Field value synonyms: canonical names, scoped filters, ambiguity and disabled mappings passed.');
+}
+
+{
+ const {applyAlwaysFilter}=require('../.tmp/test/alwaysFilter');
+ const plan={groups:[],measures:[],filters:[],summary:[]};
+ const cfg={fields:[{name:'Tenant',table:'Data',column:'Tenant',type:'text'},{name:'City',table:'Data',column:'City',type:'text'}],alwaysFilter:[{field:'Tenant',values:['A','B']},{field:'City',values:['Riyadh','Doha']}]};
+ const result=applyAlwaysFilter(plan,cfg);
+ assert.deepEqual(result.filters.map(f=>f.values),[['A','B'],['Riyadh','Doha']]);
+ assert.deepEqual(applyAlwaysFilter(result,cfg),result);
+ assert.throws(()=>applyAlwaysFilter({...plan,filters:[{target:{table:'Data',column:'City'},operator:'In',values:['Other']}]},cfg),/conflicts/);
+ assert.throws(()=>applyAlwaysFilter(plan,{...cfg,alwaysFilter:[cfg.alwaysFilter[0],{field:'Missing',values:['A']}]}),/unavailable/);
+ console.log('Multiple Always filters: intersection, idempotence and fail-closed validation passed.');
+}

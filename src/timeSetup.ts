@@ -23,6 +23,8 @@ export function normalizeMonthPeriods(question: string, setup: TimeSetup = {}, l
     let text = question.replace(/;\s*(?:answerFilters|modelScope):[\s\S]*$|\b(?:where|with)\s+[\s\S]*$/i, protect);
     text = text.replace(/"[^"]*"|'[^']*'|\([^)]*\)|\[[^\]]*\]|\b\d{4}-\d{2}-\d{2}\b/g, protect);
     for (const literal of [...new Set(literals)].filter(value => value && !/^\d+$/.test(value) && !new RegExp(`^(?:${monthPattern})$`, "i").test(value)).sort((a, b) => b.length - a.length)) {
+        if (/^year$/i.test(literal)) { text = text.replace(/\byear\b(?![-\s]+to[-\s]+date\b)/gi, protect); continue; }
+        if (/^date$/i.test(literal)) { text = text.replace(/(?<!year[-\s]+to[-\s]+)\bdate\b/gi, protect); continue; }
         const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         text = text.replace(new RegExp(`(?<![\\w])${escaped}(?![\\w])`, "gi"), protect);
     }
@@ -34,8 +36,14 @@ export function normalizeMonthPeriods(question: string, setup: TimeSetup = {}, l
         return result;
     };
     const named = (name: string, value: string) => `${calendarMonths.find(month => month.slice(0, 3).toLowerCase() === name.slice(0, 3).toLowerCase())} ${year(value)}`;
+    // Move a period modifier out of the month/year pair before canonicalizing it.
+    // Protected business names and explicit filter values are untouched.
+    text = text.replace(/\byear[-\s]+to[-\s]+date\b/gi, 'YTD').replace(/\btrailing[-\s]+12[-\s]+months\b/gi, 'TTM');
+    text = text.replace(new RegExp(`\\b(${monthPattern})\\.?\\s+(ytd|ttm)\\s+(\\d{4}|\\d{2})\\b`, 'gi'), (_, month, mode, value) => `${mode} ${named(month,value)}`);
+    text = text.replace(new RegExp(`\\b(\\d{4}|\\d{2})\\s+(ytd|ttm)\\s+(${monthPattern})\\b\\.?`, 'gi'), (_, value, mode, month) => `${mode} ${named(month,value)}`);
+    text = text.replace(new RegExp(`\\b(${monthPattern})\\.?\\s+of\\s+(\\d{4}|\\d{2})\\b`, 'gi'), (_, month, value) => named(month,value));
     text = text.replace(new RegExp(`\\b(${monthPattern})\\.?[\\s/-]+(\\d{4}|\\d{2})\\b`, "gi"), (_, month, value) => named(month, value));
-    text = text.replace(new RegExp(`\\b(\\d{4}|\\d{2})[\\s/-]+(${monthPattern})\\.?\\b`, "gi"), (_, value, month) => named(month, value));
+    text = text.replace(new RegExp(`\\b(\\d{4}|\\d{2})[\\s/-]+(${monthPattern})\\b\\.?`, "gi"), (_, value, month) => named(month, value));
     text = text.replace(/(?<![\w/.-])(\d{4}|\d{1,2})\s*[-/]\s*(\d{4}|\d{1,2})(?![\w/.-])/g, (match, left: string, right: string) => {
         const a = Number(left), b = Number(right);
         let month: number, value: string;
@@ -68,18 +76,36 @@ export function recognizedTimeTerms(text: string, setup: TimeSetup = {}, literal
     let searchable = text.replace(/;\s*(?:answerFilters|modelScope):[\s\S]*$|\b(?:where|with)\s+[\s\S]*$/i, mask)
         .replace(/"[^"]*"|'[^']*'|\([^)]*\)|\[[^\]]*\]|\b\d{4}-\d{2}-\d{2}\b/g, mask);
     for (const literal of literals.filter(value => value && !/^\d+$/.test(value) && !new RegExp(`^(?:${monthPattern})$`, "i").test(value))) {
+        if (/^year$/i.test(literal)) { searchable=searchable.replace(/\byear\b(?![-\s]+to[-\s]+date\b)/gi,mask); continue; }
+        if (/^date$/i.test(literal)) { searchable=searchable.replace(/(?<!year[-\s]+to[-\s]+)\bdate\b/gi,mask); continue; }
         searchable = searchable.replace(new RegExp(`(?<![\\w])${literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w])`, "gi"), mask);
     }
-    const pattern = new RegExp(`\\b(?:${monthPattern})\\.?[\\s/-]+(?:\\d{4}|\\d{2})\\b|\\b(?:\\d{4}|\\d{2})[\\s/-]+(?:${monthPattern})\\.?\\b|(?<![\\w/.-])(?:\\d{4}|\\d{1,2})\\s*[-/]\\s*(?:\\d{4}|\\d{1,2})(?![\\w/.-])`, "gi");
+    const connector = '(?:[\\s/-]+|\\s+(?:ytd|ttm|year[-\\s]+to[-\\s]+date|trailing[-\\s]+12[-\\s]+months|of)\\s+)';
+    const pattern = new RegExp(`\\b(?:${monthPattern})\\.?${connector}(?:\\d{4}|\\d{2})\\b|\\b(?:\\d{4}|\\d{2})${connector}(?:${monthPattern})\\.?\\b|(?<![\\w/.-])(?:\\d{4}|\\d{1,2})\\s*[-/]\\s*(?:\\d{4}|\\d{1,2})(?![\\w/.-])`, "gi");
     for (const match of searchable.matchAll(pattern)) {
         try {
-            const canonical = normalizeMonthPeriods(match[0], setup);
+            const canonical = normalizeMonthPeriods(match[0], setup).replace(/^(?:ytd|ttm)\s+/i,'');
             if (new RegExp(`^(?:${calendarMonths.join("|")}) \\d{4}$`).test(canonical)) terms.push({start: match.index!, end: match.index! + match[0].length, kind: "value"});
         } catch { /* Incomplete, invalid or ambiguous periods are not recognized. */ }
+    }
+    if (setup.yearField || setup.dateField || setup.monthIndexField) {
+        for (const term of standaloneYearTerms(text,literals)) {
+            if (!terms.some(other=>term.start<other.end&&term.end>other.start)) terms.push(term);
+        }
     }
     if (includeYearlyPeriods && !terms.length && setup.monthIndexField && !/\d/.test(searchable.replace(/trailing 12 months/gi, "")) && /\b(?:ytd|ttm|year to date|trailing 12 months)\b/i.test(searchable)) {
         for (const match of searchable.matchAll(new RegExp(`\\b(?:${monthPattern})\\b`, "gi"))) terms.push({start:match.index!,end:match.index!+match[0].length,kind:"value"});
     }
     if (terms.length && setup.monthIndexField) for (const match of searchable.matchAll(/\b(?:ytd|ttm|year to date|trailing 12 months)\b/gi)) terms.push({start: match.index!, end: match.index! + match[0].length, kind: "value"});
     return terms;
+}
+
+/** Four digit years outside names, IDs, numeric amounts and explicit filters. */
+export function standaloneYearTerms(text:string,literals:string[]=[]):Array<{start:number;end:number;kind:'value'}> {
+    const mask=(value:string)=>' '.repeat(value.length);
+    let searchable=text.replace(/;\s*(?:answerFilters|modelScope):[\s\S]*$|\b(?:where|with)\s+[\s\S]*$/i,mask)
+        .replace(/"[^"]*"|'[^']*'|\([^)]*\)|\[[^\]]*\]|\b\d{4}-\d{2}-\d{2}\b|\b(?:top|bottom)\s+\d+\b/gi,mask);
+    for(const literal of literals.filter(value=>value&&!/^\d+$/.test(value))) searchable=searchable.replace(new RegExp(`(?<![\\w])${literal.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?![\\w])`,'gi'),mask);
+    return Array.from(searchable.matchAll(/(?<![\w/.,$%+-])(?:19\d{2}|[2-9]\d{3})(?![\w/.,%+-])/g))
+        .filter(match=>Number(match[0])<=9998).map(match=>({start:match.index!,end:match.index!+4,kind:'value'}));
 }
