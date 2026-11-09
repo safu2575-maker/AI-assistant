@@ -1,0 +1,25 @@
+const assert=require('node:assert/strict');
+const {answerCashFlow,cashQuestion}=require('../.tmp/test/cashFlowQuery');
+const {cashSelectionFilters}=require('../.tmp/test/cashFlowSelection');
+(async()=>{
+ const names=['Company','Document','Clearing','Account','Category','MonthIndex','Currency'];
+ const config={table:'Fields',column:'Fields',options:names,fields:names.map(name=>({name,table:'Journal',column:name,type:name==='MonthIndex'?'number':'text'})),time:{monthIndexField:'MonthIndex',monthIndexBase:1},enabled:true};
+ const setup={fields:{company:'Company',document:'Document',clearing:'Clearing',account:'Account',currency:'Currency'},measure:'Signed Amount',rules:[]};
+ const scope={question:'Show Rent by Category;answerFilters:'+encodeURIComponent(JSON.stringify([{field:'MonthIndex',values:['24294']}])) ,requireSelection:true,selections:[[{table:'Journal',column:'Category',value:'Electronics'}]]};
+ let plan;const load=async p=>(plan=p,{text:''});
+ await answerCashFlow(cashQuestion(setup,'9720',{phase:'starts',filters:[],selectionScopes:[scope],banks:['104881']}),config,['Rent','Signed Amount'],load);
+ assert.deepEqual(plan.measures,['Signed Amount']);
+ assert.deepEqual(plan.filters.find(f=>f.target.column==='Category').values,['Electronics']);
+ assert.deepEqual(plan.filters.find(f=>f.target.column==='MonthIndex').values,[24294]);
+ assert.deepEqual(plan.filters.find(f=>f.target.column==='Account').values,['104881']);
+ await answerCashFlow(cashQuestion(setup,'9720',{phase:'links',link:{field:'Document',values:['001']}}),config,['Rent','Signed Amount'],load);
+ assert.ok(!plan.filters.some(f=>['MonthIndex','Category','Account'].includes(f.target.column)));
+ const conflict={...scope,selections:[[{table:'Journal',column:'Company',value:'9760'}]]};
+ await answerCashFlow(cashQuestion(setup,'9720',{phase:'starts',filters:[],selectionScopes:[conflict]}),config,['Rent','Signed Amount'],load);
+ assert.deepEqual(plan.filters.find(f=>f.target.column==='Company').values,[],'Conflicting company must not widen');
+ assert.throws(()=>cashSelectionFilters([{...scope,selections:[]}],config,['Rent']),/no model context/);
+ assert.throws(()=>cashSelectionFilters([scope,scope],config,['Rent']),/individual period/);
+ await answerCashFlow(';cashflow:'+encodeURIComponent(JSON.stringify({selectionContext:true,selectionScopes:[scope],setup})),config,['Rent','Signed Amount'],load);
+ assert.deepEqual(plan.groups,['Company','Currency']);assert.equal(plan.cashFlowRowLimit,201);
+ console.log('Selected cashflow: numeric period, category, saved measure, exact company intersection, links and unsupported contexts passed.');
+})();

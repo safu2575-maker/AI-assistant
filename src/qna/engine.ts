@@ -1,3 +1,4 @@
+import { allCustomKpis } from '../calculationGroups';
 import { wideCategoryFields, COLUMN_LAYOUT_NOTICE } from "../columnLayout";
 import { alwaysFilterRules } from "../alwaysFilter";
 import { evaluateFormula } from "./formula";
@@ -202,7 +203,7 @@ export class GlobalQnaEngine {
 
     private syncCustomKpis(): void {
         const native=this.context.measures.filter(m=>!m.key.startsWith("askbics-custom:"));
-        this.context={...this.context,measures:[...native,...(this.layoutSettings.customKpis||[]).filter(k=>k.enabled).map(k=>({key:"askbics-custom:"+k.id,name:k.name,values:[] as Array<number|null>,formatHint:k.format==='percentage'?'percentage' as const:'number' as const,formatString:kpiFormat(k)}))]};
+        this.context={...this.context,measures:[...native,...allCustomKpis(this.layoutSettings).filter(k=>k.enabled).map(k=>({key:"askbics-custom:"+k.id,name:k.name,values:[] as Array<number|null>,formatHint:k.format==='percentage'?'percentage' as const:'number' as const,formatString:kpiFormat(k)}))]};
     }
     private invalidateCaches(): void { this.syncCustomKpis(); this.termCandidates = null; this.autocompleteItems.clear(); this.cachedDateValues = null; this.responseCache.clear(); }
     private configuredAliases(name: string): string[] { if (this.layoutSettings.synonymEnabled?.[name] === false) return []; return (this.layoutSettings.synonyms?.[name] || []).map(norm).filter(Boolean); }
@@ -647,10 +648,11 @@ export class GlobalQnaEngine {
 
     private aggregate(measure: QnaMeasure, indices: number[], aggregation: QnaAggregation): number {
         if(measure.key.startsWith("askbics-custom:")){
-            const native=this.context.measures.filter(m=>!m.key.startsWith("askbics-custom:"));const compiled=compileKpis(this.layoutSettings.customKpis,native.map(m=>m.name));
+            const native=this.context.measures.filter(m=>!m.key.startsWith("askbics-custom:"));const compiled=compileKpis(allCustomKpis(this.layoutSettings),native.map(m=>m.name));
             if(aggregation!=="sum")throw new Error("Custom KPIs calculate from source measures; use the KPI name without an aggregation override.");
             const evaluate=(name:string,scope:number[]):number|null=>{
                 const kpi=compiled.byName.get(name);
+                if(kpi?.calculation)throw new Error("Calculation groups require configured model queries; loaded-row evaluation is not supported.");
                 if(!kpi){const source=native.find(m=>m.name===name)!;if(scope.length===this.context.rowCount&&source.modelTotal!==undefined)return source.modelTotal;if(!this.layoutSettings.additiveMeasures?.includes(name))throw new Error("Custom KPI requires model-backed totals or an explicitly additive source measure: "+name);return scope.some(i=>source.values[i]!==null)?this.aggregate(source,scope,"sum"):null;}
                 let filtered=scope;
                 for(const rule of kpi.filters||[]){const field=this.context.fields.find(f=>f.name===rule.field);if(!field)throw new Error('KPI filter field is unavailable: '+rule.field);filtered=filtered.filter(index=>rule.values.includes(field.values[index]));}
@@ -737,7 +739,7 @@ export class GlobalQnaEngine {
     }
 
     private formatAggregate(measure: QnaMeasure, value: number, aggregation: QnaAggregation): string {
-        if(measure.key.startsWith("askbics-custom:")){if(!Number.isFinite(value))return "—";const k=this.layoutSettings.customKpis!.find(k=>k.name===measure.name)!;return (k.format==='percentage'?value*100:value).toLocaleString(undefined,{minimumFractionDigits:k.decimals,maximumFractionDigits:k.decimals})+(k.format==='percentage'?'%':'');}
+        if(measure.key.startsWith("askbics-custom:")){if(!Number.isFinite(value))return "—";const k=allCustomKpis(this.layoutSettings).find(k=>k.name===measure.name)!;return (k.format==='percentage'?value*100:value).toLocaleString(undefined,{minimumFractionDigits:k.decimals,maximumFractionDigits:k.decimals})+(k.format==='percentage'?'%':'');}
         return aggregation === "count" || aggregation === "distinctCount" ? Math.round(value).toLocaleString() : this.context.formatValue(measure, value);
     }
 }

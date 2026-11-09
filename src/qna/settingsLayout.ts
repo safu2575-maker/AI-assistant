@@ -1,16 +1,18 @@
+import { settingsSectionApply } from './settingsSectionApply';
 import { installSettingsHelp } from "./settingsHelp";
 /** Organize existing controls without replacing their draft state or event handlers. */
-export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLElement, navigation: HTMLElement, body: HTMLElement, layoutNote: HTMLElement): (section: boolean | "time" | "revenue" | "startup" | "synonyms" | "kpis" | "groups" | "filters" | "aging" | "cashflow") => void {
+export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLElement, navigation: HTMLElement, body: HTMLElement, layoutNote: HTMLElement, validateSection:(label:string)=>boolean=()=>true): ((section: boolean | "time" | "revenue" | "startup" | "synonyms" | "kpis" | "groups" | "filters" | "aging" | "cashflow" | "calculations") => void) & {validateAll:()=>boolean} {
     const createSection = (title: string, description: string) => {
         const section = document.createElement("section"); section.className = "askbics-settings-page";
         const heading = document.createElement("h3"); heading.textContent = title; heading.dataset.settingsHelp = description;
         const help = document.createElement("p"); help.className = "askbics-settings-description"; help.textContent = description;
         section.append(heading,help); return section;
     };
-    const cashflow=createSection("Cash flow", "Map document relationships and choose up to 10 starting-posting columns. Destination account, Destination description, Destination amount and Details are added automatically.");
+    const calculations=createSection("Calculation Groups", "Create a group, then add its calculations and KPIs. Each formula uses its own filters; totals recalculate in model context by default. Connected model measures and configured fields are required.");
+    const cashflow=createSection("Cash flow", "Map document relationships and choose up to 10 starting-posting columns. Destination account, Destination description, Destination amount, Variance and Details are added automatically.");
     const waterfall=createSection("Waterfall", "Choose the default category and measure for the home-screen waterfall workspace.");
     const groups=createSection("Field & measure groups", "Use one name for multiple fields or measures.");
-    const aging=createSection("Aging", "Analyze outstanding balances by age. Ask: Show Customer aging as of 2026-09-30 summary.");
+    const aging=createSection("Aging", "Analyze outstanding balances as of today. Ask: Show Customer aging summary. Specify as of YYYY-MM-DD only for a historical date.");
     const kpis=createSection("Custom KPIs", "Create ratios, percentages, and other reusable calculations.");
     const backup = createSection("Settings backup", "Export, validate, and restore your configuration.");
     const general = createSection("General", "Choose how answers appear in your conversation.");
@@ -23,7 +25,7 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     const reports = createSection("Saved reports", "Organize reports into sections.");
     const analysis = createSection("Explain & investigate", "Explore changes across available business dimensions in one answer.");
     for (const child of Array.from(form.children)) {
-        const target = child.classList.contains("askbics-cash-settings") ? cashflow : child.classList.contains("askbics-aging-settings") ? aging : child.classList.contains("askbics-waterfall-settings") ? waterfall : child.classList.contains("askbics-answer-groups") ? groups : child.classList.contains("askbics-custom-kpis") ? kpis : child.classList.contains("askbics-settings-backup") ? backup : child.classList.contains("askbics-qna__conversation-settings") ? general
+        const target = child.classList.contains("askbics-calculation-groups") ? calculations : child.classList.contains("askbics-cash-settings") ? cashflow : child.classList.contains("askbics-aging-settings") ? aging : child.classList.contains("askbics-waterfall-settings") ? waterfall : child.classList.contains("askbics-answer-groups") ? groups : child.classList.contains("askbics-custom-kpis") ? kpis : child.classList.contains("askbics-settings-backup") ? backup : child.classList.contains("askbics-qna__conversation-settings") ? general
             : child.classList.contains("askbics-qna__autocomplete-settings") ? suggestions
             : (child.classList.contains("askbics-qna__synonym-settings") || child.classList.contains("askbics-qna__value-synonym-settings")) ? synonyms
             : child.classList.contains("askbics-qna__revenue-settings") ? revenue
@@ -62,6 +64,7 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     const categories=[
       {label:'General',icon:'General',pages:[{label:'Conversation',page:general},...(hasStartup?[{label:'Startup loading',page:startup}]:[])]},
       {label:'Fields & measures',icon:'Data setup',pages:[{label:'Catalogue & detection',page:data},{label:'Visibility',page:suggestions},{label:'Synonyms',page:synonyms},{label:'Groups',page:groups}]},
+      {label:'Calculation Groups',icon:'Custom KPIs',pages:[{label:'Calculation Groups',page:calculations}]},
       {label:'Calculations & time',icon:'Custom KPIs',pages:[{label:'Custom KPIs',page:kpis},{label:'Revenue',page:revenue},{label:'Time setup',page:time},{label:'Aging',page:aging}]},
       {label:'Answers & charts',icon:'Table & matrix',pages:[{label:'Table & matrix',page:layout},{label:'Explain',page:analysis},{label:'Waterfall',page:waterfall}]},
       {label:'Filters & transactions',icon:'General',pages:[{label:'Always filters',page:always},{label:'Transactions',page:transactions},{label:'Summary cards',page:cards},{label:'Clearing details',page:clearing},{label:'Document details',page:documents},{label:'Cash flow',page:cashflow}]},
@@ -98,9 +101,12 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
         const status = document.createElement("p"); status.className="askbics-settings-time-status"; status.setAttribute("role","status");
         const updateStatus = () => {
             const selected = timePanel.querySelector<HTMLSelectElement>('select[aria-label^="MonthIndex"]');
-            status.textContent = selected?.value ? `Ready for YTD and TTM · ${selected.value}` : "Choose MonthIndex to enable YTD and TTM.";
+            status.textContent = selected?.value ? `Ready for YTD, TTM and running totals · ${selected.value}` : "Choose MonthIndex to enable YTD, TTM and running totals.";
             status.classList.toggle("is-ready",!!selected?.value);
         };
+        timePanel.querySelector('.askbics-time-query-examples')?.remove();
+        const examples=document.createElement('p');examples.className='askbics-qna__settings-note askbics-time-query-examples';examples.textContent='Ask Sales YTD or Sales TTM to use the latest month with measure data within your filters. Specify an ending month to override it. Ask Sales running total by month for 2026 for calendar-year cumulative values. Calculations respect the measure type; report filters still apply.';
+        timePanel.append(examples);
         timePanel.append(status); timePanel.oninput=updateStatus; updateStatus();
     }
     const tabs=document.createElement('div');tabs.className='askbics-settings-tabs';tabs.setAttribute('role','tablist');
@@ -147,8 +153,10 @@ export function settingsLayout(form: HTMLElement, data: HTMLElement, time: HTMLE
     };
     search.onkeydown=event=>{if(event.key==='Escape'){event.stopPropagation();search.value='';results.hidden=true;}if(event.key==='ArrowDown'){event.preventDefault();results.querySelector<HTMLButtonElement>('button')?.focus();}};
     const toolbar=document.createElement('div');toolbar.className='askbics-settings-sticky-toolbar';toolbar.append(searchBox,tabs);body.append(toolbar,...entries.map(entry=>entry.page));select(0);
+    const sectionActions=entries.map(entry=>settingsSectionApply(entry.page,entry.label,()=>validateSection(entry.label)));
     // Host-owned data controls are reused when the dialog opens again.
     const disposeHelp=installSettingsHelp(body);
-    body.addEventListener('askbics-settings-dispose',()=>{disposeHelp();for(const {node,marker} of moved)marker.replaceWith(node);},{once:true});
-    return section=>{const page=section==='cashflow'?cashflow:section==='aging'?aging:section==='filters'?always:section==='groups'?groups:section==='kpis'?kpis:section==='synonyms'?synonyms:section==='startup'&&hasStartup?startup:section==='revenue'?revenue:section===true?data:section==='time'?time:general;select(entries.findIndex(entry=>entry.page===page));};
+    body.addEventListener('askbics-settings-dispose',()=>{disposeHelp();sectionActions.forEach(action=>action.dispose());for(const {node,marker} of moved)marker.replaceWith(node);},{once:true});
+    const choose: (section:boolean|"time"|"revenue"|"startup"|"synonyms"|"kpis"|"groups"|"filters"|"aging"|"cashflow"|"calculations")=>void = section=>{const page=section==='calculations'?calculations:section==='cashflow'?cashflow:section==='aging'?aging:section==='filters'?always:section==='groups'?groups:section==='kpis'?kpis:section==='synonyms'?synonyms:section==='startup'&&hasStartup?startup:section==='revenue'?revenue:section===true?data:section==='time'?time:general;select(entries.findIndex(entry=>entry.page===page));};
+    return Object.assign(choose,{validateAll:()=>{for(let i=0;i<sectionActions.length;i++){if(!sectionActions[i].apply()){select(i);return false;}}return true;}});
 }

@@ -26,3 +26,36 @@ const cashFields=['Company','Document','Clearing','Account','Description','Input
 const reviewed=reviewBackup(JSON.stringify({...base,layout:{cashFlow}}),cashFields,['Amount']);assert.equal(reviewed.blocked,false);assert.deepEqual(reviewed.accepted.cashFlow,cashFlow);
 for(const replace of [true,false])assert.deepEqual(mergeBackup(current,reviewed.accepted,replace).cashFlow,cashFlow);
 assert.equal(reviewBackup(JSON.stringify({...base,layout:{cashFlow}}),cashFields.filter(f=>f!=='Input'),['Amount']).blocked,true);
+
+for(const allocationPolicy of ['verified','proportional']){
+ const configured={...cashFlow,allocationPolicy};const checked=reviewBackup(JSON.stringify({...base,layout:{cashFlow:configured}}),cashFields,['Amount']);
+ assert.equal(checked.blocked,false);for(const replace of [true,false])assert.equal(mergeBackup(current,checked.accepted,replace).cashFlow.allocationPolicy,allocationPolicy);
+}
+assert.equal(reviewBackup(JSON.stringify({...base,layout:{cashFlow:{...cashFlow,allocationPolicy:'guess'}}}),cashFields,['Amount']).blocked,true);
+
+// Calculation settings survive JSON export/import with stable IDs and ordered definitions.
+const calculationGroups=[{version:1,id:'finance',name:'Finance',description:'Finance defaults',enabled:true,defaultMeasure:'Rent',defaultField:'Tenant',measures:[
+ {id:'rent-a',name:'Tenant rent',description:'Tenant A',formula:"('Rent', [Tenant] = 'A')",enabled:true,format:'number',decimals:2,total:'recalculate',defaultMeasure:'Rent',defaultField:'Tenant'},
+ {id:'ratio',name:'Rent ratio',description:'Dependent KPI',formula:"@[Tenant rent] / ('Rent')",enabled:true,format:'percentage',decimals:3,total:'custom',totalFormula:"DIVIDE(@[Tenant rent], ('Rent'))"},
+ {id:'disabled',name:'Hidden KPI',description:'Retain disabled definitions',formula:"('Rent')",enabled:false,format:'number',decimals:0,total:'hide'}
+]},{version:1,id:'ops',name:'Operations',description:'Disabled group',enabled:false,measures:[]}];
+const calculationBackup=JSON.stringify({...base,layout:{calculationGroups}});
+const calculationReview=reviewBackup(calculationBackup,['Tenant'],['Rent']);
+assert.equal(calculationReview.blocked,false);
+assert.deepEqual(calculationReview.accepted.calculationGroups,calculationGroups);
+for(const replace of [false,true])assert.deepEqual(mergeBackup(current,calculationReview.accepted,replace).calculationGroups,calculationGroups);
+const existingGroup={...calculationGroups[1],id:'other',name:'Other'};
+assert.deepEqual(mergeBackup({...current,calculationGroups:[existingGroup,calculationGroups[0]]},calculationReview.accepted,false).calculationGroups,[existingGroup,...calculationGroups]);
+assert.equal(reviewBackup(calculationBackup,[],['Rent']).blocked,true);
+assert.equal(reviewBackup(calculationBackup,['Tenant'],[]).blocked,true);
+const broken=JSON.parse(calculationBackup);broken.layout.calculationGroups[0].measures[1].formula='@[Missing KPI]';
+assert.equal(reviewBackup(JSON.stringify(broken),['Tenant'],['Rent']).blocked,true);
+assert.equal(reviewBackup(JSON.stringify({...base,layout:{}}),['Tenant'],['Rent']).blocked,false);
+console.log('Calculation group backup: IDs, order, formulas, defaults, formats, totals, disabled state, dependencies, merge/replace and missing catalogues passed.');
+const agingSetup={name:'Customer',dateField:'Due',basis:'Due date',measure:'Balance',group:'Customer',asOfField:'Snapshot',defaultDate:'',display:'detailed',buckets:require('../.tmp/test/aging').defaultAgingBuckets(),additive:true};
+const agingBackup={...base,layout:{aging:[agingSetup]}};
+const checkedAging=reviewBackup(JSON.stringify(agingBackup),['Due','Customer','Snapshot'],['Balance']);assert.equal(checkedAging.blocked,false);assert.equal(checkedAging.accepted.aging[0].additive,true);
+for(const replace of [false,true])assert.equal(mergeBackup(current,checkedAging.accepted,replace).aging[0].additive,true);
+assert.equal(reviewBackup(JSON.stringify({...agingBackup,layout:{aging:[{...agingSetup,additive:'yes'}]}}),['Due','Customer','Snapshot'],['Balance']).blocked,true);
+
+const overallAging=reviewBackup(JSON.stringify({...agingBackup,layout:{aging:[{...agingSetup,group:''}]}}),['Due','Snapshot'],['Balance']);assert.equal(overallAging.blocked,false);for(const replace of [false,true])assert.equal(mergeBackup(current,overallAging.accepted,replace).aging[0].group,'');

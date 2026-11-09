@@ -27,9 +27,19 @@ export interface QnaContext {
 
 export type ModelSelection = Array<{ table: string; column?: string; hierarchy?: string; hierarchyLevel?: string; dateDay?: boolean; value: string | number | boolean }>;
 export interface QnaTable {
+    /** Original metric for each row when calculation items are displayed vertically. */
+    calculationRowMeasures?: string[];
+    calculationNotes?: Record<string,string[]>;
+    calculationDetails?: (row:number,column:number)=>string[];
+    documentGroups?: {keys:string[]; labels:Record<string,string>; descriptions?:Record<string,string>; totals?:(indices:number[],filtered:boolean)=>string[]};
+    statusBadges?: Record<string, Record<string, {tone:string; description:string}>>;
+    /** Initial presentation only; does not alter numeric values or persisted settings. */
+    defaultDataBarColumns?: string[];
     traceHighlightRows?: number[];
     /** View-only extension: callbacks are never persisted as model data. */
     detailAction?: {column:number; open:(row:number,anchor:HTMLElement)=>void};
+    /** Presentation after sorting/filtering; source rows remain unchanged. */
+    presentRows?: (sourceRows:number[])=>string[][];
     filteredTotals?: (sourceRows:number[])=>string[];
     totalRowIndices?: number[];
     columnLayoutNotice?: string;
@@ -79,6 +89,7 @@ export interface QnaTable {
 }
 
 export interface QnaLayoutSettings {
+    calculationGroups?: import('../calculationGroups').CalculationGroup[];
     cashFlow?: import("../cashFlow").CashSetup;
     waterfall?: import("./waterfallWorkspace").WaterfallDefaults;
     answerGroups?: import("../answerGroups").AnswerGroup[];

@@ -1,8 +1,10 @@
+import { correctCatalogueTypos } from './catalogueTypos';
 import { filterShortcuts } from "./filterShortcuts";
 import { fieldLayout } from "./fieldLayout";
 import { extractBlankFilters } from "./blankFilters";
 import { applyAlwaysFilter } from "./alwaysFilter";
 import { expandAnswerGroups } from "./answerGroups";
+import { expandCalculationGroups } from './calculationGroups';
 import { QnaChartType } from "./qna/types";
 import { timeFieldOrder } from "./qna/timeLayout";
 import { TimeSetup, monthIndexValues, normalizeMonthPeriods, standaloneYearTerms } from "./timeSetup";
@@ -17,6 +19,7 @@ export interface ModelField {
     values?: string[];
 }
 export interface ParameterConfig {
+    calculationGroups?: import('./calculationGroups').CalculationGroup[];
     answerGroups?: import("./answerGroups").AnswerGroup[];
     customKpis?: import("./customKpis").CustomKpi[];
     aging?: import("./aging").AgingSetup[];
@@ -39,6 +42,8 @@ export interface ParameterConfig {
     time?: TimeSetup;
 }
 export interface ParameterPlan {
+    agingQuery?: boolean;
+    agingDateField?: string;
     cashFlowData?: boolean;
     cashFlowRowLimit?: number;
     summaryCard?: boolean;
@@ -105,7 +110,19 @@ export function validateParameterConfig(config: ParameterConfig): void {
 
 /** Conservative grammar: unrecognized text fails instead of broadening a query. */
 export function planParameterQuestion(question: string, config: ParameterConfig, availableMeasures: string[]): ParameterPlan {
-    question = expandAnswerGroups(question, config.answerGroups);
+    try { return planParameterQuestionStrict(question,config,availableMeasures); }
+    catch(error) {
+        if(!(error instanceof Error)||!error.message.startsWith('Could not safely interpret'))throw error;
+        const names=[...availableMeasures,...config.fields.flatMap(f=>[f.name,...(f.aliases||[])]),...Object.values(config.groupAliases||{}).flat()];
+        const corrected=correctCatalogueTypos(question,{names,values:config.fields.flatMap(f=>f.values||[])});
+        if(!corrected.corrections.length)throw error;
+        const plan=planParameterQuestionStrict(corrected.question,config,availableMeasures);
+        plan.summary.push(...corrected.corrections);
+        return plan;
+    }
+}
+function planParameterQuestionStrict(question: string, config: ParameterConfig, availableMeasures: string[]): ParameterPlan {
+    question = expandAnswerGroups(expandCalculationGroups(question,config.calculationGroups), config.answerGroups);
     validateParameterConfig(config);
     config = {...config, fields: config.fields.map(field => ({...field, values: field.values?.filter(value => value.trim())}))};
     let text = normalizeMonthPeriods(question, config.time, [...availableMeasures, ...config.fields.flatMap(field => [field.name, ...(field.aliases || []), ...(field.type !== "date" ? field.values || [] : [])])]).trim().replace(/[.!?]+$/, "");
@@ -175,14 +192,24 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
         }
     }
     const measureMatches: Array<{name: string; position: number}> = [];
+    // A shorter measure name must not consume part of a known categorical
+    // value (for example NOVA inside Nova Fashion). Keep that value for filters.
+    const valueSpans: Array<{start:number;end:number}> = [];
+    for (const value of new Set(config.fields.flatMap(field => field.values || []))) {
+        const pattern = new RegExp(phrase(value).source, "gi");
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(text))) valueSpans.push({start:match.index,end:match.index+match[0].length});
+    }
+    const insideLongerValue = (match: RegExpExecArray): boolean => valueSpans.some(span =>
+        span.end-span.start > match[0].length && span.start <= match.index && span.end >= match.index+match[0].length);
     for (const measure of [...availableMeasures].sort((a, b) => b.length - a.length)) {
         const match = phrase(measure).exec(text);
-        if (match) { measureMatches.push({name: measure, position: match.index}); text = text.slice(0,match.index) + " ".repeat(match[0].length) + text.slice(match.index + match[0].length); }
+        if (match && !insideLongerValue(match)) { measureMatches.push({name: measure, position: match.index}); text = text.slice(0,match.index) + " ".repeat(match[0].length) + text.slice(match.index + match[0].length); }
     }
     const measureAliases = availableMeasures.flatMap(name => (config.groupAliases?.[name] || []).filter(alias => alias.trim()).map(alias => ({name, alias}))).sort((a,b) => b.alias.length - a.alias.length);
     for (const {name, alias} of measureAliases) {
         const aliasText = text.replace(/"[^"]*"|\([^)]*\)|\[[^\]]*\]/g, value => " ".repeat(value.length));
-        const match = phrase(alias).exec(aliasText); if (!match) continue;
+        const match = phrase(alias).exec(aliasText); if (!match || insideLongerValue(match)) continue;
         const owners = new Set(measureAliases.filter(item => normalizeParameterName(item.alias) === normalizeParameterName(alias)).map(item => item.name));
         const fieldCollision = config.fields.some(field => [field.name, ...(field.aliases || []), ...(config.groupAliases?.[field.name] || [])].some(value => normalizeParameterName(value) === normalizeParameterName(alias)));
         if (owners.size > 1 || fieldCollision) throw new Error(`Ambiguous synonym ${alias}; use the full field or measure name.`);
@@ -202,6 +229,18 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
     for (const field of [...config.fields].sort((a, b) => b.name.length - a.name.length)) {
         const match = new RegExp(`(?:${[field.name, ...(field.aliases || [])].sort((a,b) => b.length-a.length).map(escape).join("|")})\\s*\\(([^)]+)\\)`, "i").exec(text);
         if (match) { const values = match[1].split("|").map(value => value.trim()); if (values.some(value => !value)) throw new Error("Filter values cannot be empty."); addValues(field, values); text = text.replace(match[0], field.name); }
+    }
+    // Explicit field/value pairs take precedence over the generic year detector.
+    const numericAliases = config.fields.flatMap(field => [field.name, ...(field.aliases || []), ...(config.groupAliases?.[field.name] || [])].map(alias => ({field, alias}))).sort((a,b)=>b.alias.length-a.alias.length);
+    for (const {field, alias} of numericAliases) {
+        const masked = text.replace(/"[^"]*"|'[^']*'/g, value => " ".repeat(value.length));
+        const pattern = new RegExp(`(?<![\\w])${escape(alias)}\\s+([+-]?\\d+(?:\\.\\d+)?)(?![\\w.-])`, "gi");
+        for (const match of [...masked.matchAll(pattern)].reverse()) {
+            const owners = numericAliases.filter(item=>normalizeParameterName(item.alias)===normalizeParameterName(alias));
+            if (new Set(owners.map(item=>item.field.name)).size>1) throw new Error(`Ambiguous synonym ${alias}; use the full field name.`);
+            addValues(field, [match[1]]);
+            text = text.slice(0,match.index!) + " ".repeat(match[0].length) + text.slice(match.index!+match[0].length);
+        }
     }
     const period = /\b(ttm|trailing 12 months|ytd|year to date)\b/i.exec(text);
     if (period) text = text.replace(period[0], " ");
@@ -304,9 +343,9 @@ export function planParameterQuestion(question: string, config: ParameterConfig,
     // Only discard conversational language AFTER field, measure and value
     // recognition. Never remove negation, comparisons, or unknown business terms.
     remaining = remaining
-        .replace(/\b(?:i would like to see|i would like|i want to see|i want|can you|could you|would you|will you|let me see|show me|give me|tell me|and also)\b/gi, " ")
-        .replace(/\b(?:shw|shwo|sho|shwoing|showing|dispaly|disply|comapre|compar|plese|pleae|pls|plz|kindly|also)\b/gi, " ")
-        .replace(/\b(list of|list|show|compare|display|give|me|please|the|total|for|in|during|ending|as of|and|as a table|as table|grouped by|group by|by|per)\b/gi, " ").replace(/[,>&]/g, " ").trim();
+        .replace(/\b(?:i would like to know|i would like to see|i would like|i want to see|i want to know|i want|i need to see|i need|what is|what are|what['’]s|can you|could you|would you|will you|let me see|show me|give me|tell me|and also)\b/gi, " ")
+        .replace(/\b(?:shw|shwo|sho|shwoing|showing|dispaly|disply|comapre|compar|plese|pleae|pls|plz|kindly|also|thee)\b/gi, " ")
+        .replace(/\b(list of|list|show|compare|display|give|me|please|what|the|total|for|in|during|ending|as of|and|as a table|as table|grouped by|group by|by|per|of|as)\b/gi, " ").replace(/[,>&?!]/g, " ").trim();
     if (remaining) throw new Error(`Could not safely interpret “${remaining}”. Use field and measure names available in this report. For filters, use where <field name> = <value>, replacing the placeholders with your data.`);
     if (!plan.groups.length) {
         if (plan.listOnly) throw new Error("Choose a field to list.");
@@ -390,3 +429,5 @@ export function filterSignature(filter: any): string {
     const canonical = (value: any): any => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
     return JSON.stringify({ target: canonical(filter.target), operator: filter.operator, values: filter.values?.slice().sort(), logicalOperator: filter.logicalOperator, conditions: filter.conditions?.map((condition: any) => ({ operator: condition.operator, value: condition.value })).sort((a: any, b: any) => JSON.stringify(a).localeCompare(JSON.stringify(b))) });
 }
+
+

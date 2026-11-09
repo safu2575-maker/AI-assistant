@@ -63,7 +63,7 @@ try{
  await valuePicker.getByRole('searchbox').press('Escape');
  await page.screenshot({path:'test-output/kpi-filters.png'});
 
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  for(let n=0;n<100&&!stored?.layoutSettings.customKpis?.length;n++)await new Promise(r=>setTimeout(r,50));
  assert.deepEqual(stored.layoutSettings.customKpis[0].filters,[{field:'City',values:['Riyadh']}]);
  const input=page.locator('.askbics-qna__input');await input.fill('Show Rent Measure and Riyadh ratio by Assigned Group');await input.press('Escape');
@@ -92,7 +92,7 @@ try{
   if(await check.count())await check.check();else await choice.getByRole('button',{name:'Add exact value “'+value+'”',exact:true}).click();
   await choice.getByRole('searchbox').press('Escape');
  }
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  for(let n=0;n<100&&!stored?.layoutSettings.alwaysFilter;n++)await new Promise(r=>setTimeout(r,50));
  await page.screenshot({path:'test-output/always-filters.png'});
  assert.deepEqual(stored.layoutSettings.alwaysFilter,[{field:'City',values:['Riyadh']},{field:'Assigned Group',values:['Furniture']}]);

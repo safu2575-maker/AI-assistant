@@ -136,6 +136,15 @@ async function mount() {
   const transactionRequests=new Set<AbortController>();
   let latestDax = {question:"",queries:[] as string[]};
   ui.daxDiagnostics = () => latestDax;
+  ui.previewCalculations = async (groups, question) => {
+    const current = revision;
+    const requestController = new AbortController(); transactionRequests.add(requestController);
+    try {
+      const result = await api('visual-query', {question, refresh:true, settings:{...engine.getLayoutSettings(), calculationGroups:groups}, time, selections:crossSelections}, requestController.signal);
+      if (current !== revision) throw Error('Preview cancelled.');
+      return result;
+    } finally { transactionRequests.delete(requestController); }
+  };
   ui.prepareQuestion = async (question, refresh) => {
     latestDax = {question,queries:[]};
     const current = revision;

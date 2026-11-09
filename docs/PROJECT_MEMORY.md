@@ -255,3 +255,628 @@ Added Show entire trace toggle beside Back to flow diagram in node inspection. D
 Files: src/qna/cashFlowResults.ts, askbics-teams/test/cash-flow-browser.mjs. TypeScript and focused browser passed including late-document expansion, paging, highlight isolation, returning to selected step and existing Back/clear behavior. Full suites/lint pending below. No package or screenshots; live host validation pending.
 
 Final selected-step toggle verification: root and Teams regression suites and lint passed.
+
+
+## Grouped cash-flow identity correction — 2026-10-31
+When no line item is mapped, cashPostings now builds a stable field-name/value identity from the same grouping-field helper used by answerCashFlow: mapped fields plus selected source columns, excluding the measure. Raw modelGroupValues take precedence (including null); display values are the fallback only when raw values are unavailable. Field names are sorted, avoiding column-order dependence. Original mapped line-item identity and changed-amount rejection remain intact; no sum/overwrite/amount-based identity introduced. Grouped results are still not guaranteed unique source journal lines: genuine line-item/year mappings remain recommended. The separate 5000-row response limit is unchanged.
+Files: src/cashFlowQuery.ts; scripts/test-cash-flow-scope.cjs. Added regressions for the reported 58244.54/-50 grouped shape, Posting Key/date/type distinctions, raw vs display formatting, reordered fields, amount-independent keys, repeated lookup deduplication, genuine conflict rejection and authoritative explicit item mapping. No persisted schema/UI change, no package or images. Actual SAP data needs retest after user packaging. Verification results below.
+
+Identity correction verification: root build, root regression suite (including new identity tests), Teams non-packaging suite and lint passed.
+
+
+## Automatic oversized cash-flow query partitioning — 2026-10-31
+Implemented shared bounded partition loading (not an offset/cursor API). Each incomplete response is split on observed raw grouping values into complementary In/NotIn queries; complete child results replace the parent sample. Applies to starts and links in workspace. Stable posting keys reject overlap/changed amounts; company/start/link/security predicates retained. Basic filters on the same target are consolidated before host execution. Always-filter intersection now handles NotIn; Teams adapter emits NOT IN with allowlisted targets and escaped values. UI uses existing automatic loading toast and Stop/revision cancellation; diagnostic requests include partitions. No persistent settings introduced.
+Response cap remains5000; partition depth128, sets up to1000 per split, and existing global1000query/100000returned-row safety budgets remain (parent samples also consume budget). Incomplete responses without separable raw group values or safety-limited work remain incomplete with a reason. This is bounded loading beyond5000, not a million-row completion guarantee or snapshot isolation across changing source data. No extra user Continue clicks.
+Files: new src/cashFlowPaging.ts; cashFlowQuery.ts, alwaysFilter.ts, qna/cashFlowWorkspace.ts, cashFlowScope.ts; Teams app/model-service.ts; test-cash-flow-paging.cjs and package test chain; Teams cash-flow-model/scope fixtures. Tests: 6200 starting/link rows recover exact totals and identities; mixed blank/numeric/text values, Always intersection, invalid partition fields, unsplittable response and cancellation. Teams nonpackaging suite passed with NOT IN adapter assertion; TypeScript/lint passed; continuation and scope browser tests passed. Final root-suite result below. No pbiviz or screenshots. Live native Power BI filter/partition acceptance and actual SAP source still require validation after user packaging.
+
+Final partition-loading verification: full root regression suite passed; added mixed-value and Always-filter assertions also passed.
+
+
+## Cash-flow mapping help — 2026-10-31
+All 16 source-field mappings plus signed amount now receive individual contextual descriptions before global help installation. Existing question-mark markers explain meaning, sample values and required/optional conditions. Fiscal-year help explicitly distinguishes document year from clearing year and the current separate-field validation; line item explains why Posting Key is not a unique item. Removed late generic identity help assignment. Reuses shared hover/focus help and caption styling; no tracing, settings schema or validation changes. Files: cashFlowWorkspace.ts, cash-flow-browser.mjs. Browser checks one marker per mapping, meaningful descriptions, focus and clicking without changing company selection. No package/images. Verification recorded below.
+
+Mapping help verification: root build, root and Teams regression suites, and focused non-image browser test passed. Native Power BI verification pending.
+
+
+## Centered toast placement — 2026-10-31
+Moved cash-flow loading card and settings-backup toast from bottom anchors to top/left50% with two-axis translation. Existing global analysis loading overlay already centers its content. Preserved appearance, spinner, pointer behavior and cancellation. CSS-only in style/visual.less; no packaging/images. Shared LESS/browser continuation verification recorded below.
+`nCentered-toast verification: shared LESS compilation and non-image continuation browser test passed.
+
+
+## Processed and Needs attention reports — 2026-10-31
+Added shared cashFlowReport with loaded-root counts: completed, partial, unresolved, unverified, not processed. Processed tab contains only Resolved allocations from verified completed company traversal; Needs attention retains unresolved trace paths plus pending/unverified posting table with reason, source amount (suppressed on identity conflict), shared exports and View details dialog. Counts explicitly cover loaded data. Completed company results survive Stop/errors; current in-progress company traversal has no committed partial result and stays unprocessed. Identity/amount conflict conservatively marks all retained roots unverified. Empty initial-load failures show reason without inventing omitted posting counts. No additional queries or persistent settings. Existing company/security/engine logic unchanged. Report titles carry incomplete context into exports. UI filters still apply to allocation results; run-wide pending issues remain visible.
+Files: new qna/cashFlowReport.ts; cashFlowWorkspace.ts; scope unit/browser tests. Root and Teams suites, build/lint passed during implementation; summary status regression and continuation browser passed. Final issue-dialog browser result below. No pbiviz/images; native validation pending.
+
+Reviewed user error 4_3710.txt without changing engine validation: 765 requests,100037 returned rows across responses, initial5000 incomplete; global100000row safety limit and missing-identity engine error. With no posting date mapped and numeric validation upstream, blank document/item is the likely failure, but report does not identify the row. Contains old pre-partition warning. Actual source diagnosis still pending.
+
+Final report verification: root build/test/lint and focused cash-flow scope browser passed. Browser covers Needs attention issue details and Processed tab empty state. Fixed shared table detailAction column remapping when derived percentage columns are inserted, verified by that browser. Earlier Teams suite and continuation browser passed. Native Power BI remains unverified; no packaging.
+
+## Blank answer drill-through — 2026-10-31
+fieldParameterTrial response mapping now preserves null/undefined grouping values as model null selections instead of discarding the row context. Transactions and Summarize retain the blank-member predicate and original answer filters. Existing missing-context guard remains. Added producer selection regression in test-parameter and required-selection blank transaction/summary assertions in test-answer-transactions. Root build/test/lint passed; Teams suite passed with local HTTP access after sandbox fetch failure. No packaging. Re-run answers after installing the user-created package; live native Power BI validation remains required.
+
+## Explicit numeric field filters — 2026-10-31
+parameterQuery now resolves named numeric field/value pairs before generic year inference, longest aliases first, preserving raw text identifiers and rejecting ambiguous aliases. Company Code 2396 Year 2026 works with or without for, retaining Input filtering. Bare ambiguous numbers remain guarded. Added shortcut regressions with colliding company/year values. Root suite, focused regression, build/lint and Teams suite passed. No packaging; actual report validation pending.
+
+## Cash-flow engine validation context — 2026-10-31
+Replaced generic pre-traversal missing-identity/date/amount error in cashFlow.ts with company, fiscal year, document, line item and all failed checks for the first invalid posting. Blank identifiers are explicitly labelled; original identifiers including leading zeros are retained. Existing workspace catch copies the message into status and diagnostic error/status. Validation still throws before tracing; no rows skipped or allocations guessed. Regression covers missing document/item separately and together, invalid date and nonfinite amount. Root tests/build and Teams suite passed; no packaging or live validation.
+
+## Cash-flow help styling — 2026-10-31
+Extended the existing global Settings help-icon and caption selectors to cash-flow workspace (including its secondary setup panel). The existing help markers were already generated by installSettingsHelp, but CSS was scoped only to global Settings, leaving plain question marks in cash flow. Reuses identical circle, spacing, typography and hover/focus rules; help text/tooltips unchanged. Shared LESS compilation and focused cash-flow scope browser passed without screenshots. CSS-only; no packaging.
+
+## Cash-flow required indicators — 2026-10-31
+Added required legend and setup tab indicators plus aria-required on mappings. Conditional indicators follow existing setup dependencies (year/clearing year/reference year/referenced item). Company values caption marked required with updated help; mapped currency and date inputs marked conditionally. Optional account/description and starting filters remain optional. No validation, saved-state or query changes. Root build/test, Teams suite and focused browser required-field/dependency checks passed; no packaging/screenshots.
+
+## Relationship-first cash-flow investigation — 2026-10-31
+Added cashFlowDiscovery.ts: bounded, cancellable discovery from loaded postings, alternating document/opposite-sign and reference/clearing relationships, without balance/amount-equality allocation checks. Company/year/currency/account/partner/reference scope retained. Destination paths report tab shows endpoints, path status and whether verified allocation exists; View path renders original postings using shared tables, with no inferred cash totals. Clearly scoped to all loaded payments independent of category filters. Discovery limits:100000 work states,10000 results/pending branches,512 path nodes; UI yields every250 states. No new queries/settings.
+Allocation engine unchanged; wrapper partitions conservative undirected document/reference/clearing components, verifies each together, and quarantines engine identity validation failures per component. Shared settlements stay together. Loader conflicts/invalid raw data still stop the run; this does not claim arbitrary bad data isolation. Verified root membership no longer invalidated solely by an independent component failure. Existing incomplete-source rules remain conservative.
+Root suite plus new discovery regression passed (imbalance, partial amount, invalid independent component, cancellation); root build/lint, Teams suite and focused scope browser passed, including Destination paths/View path/return-to-Processed interaction. No package/screenshots; live SAP validation pending.
+
+## Compact cash-flow setup — 2026-10-31
+Removed three setup tabs. Main setup shows Company, Document, Clearing reference and Signed amount. All existing optional controls moved into one collapsed Advanced mappings disclosure with configured count; missing conditional requirements auto-expand it and show a required-fields warning. Existing values, save/copy settings and validation preserved; help notes explain account labels and year/item/currency needs. Root build/tests, Teams suite and non-image browser checks (no tabs, optional fields hidden/reveal, required dependencies) passed. No package/screenshots.
+
+### 2026-10-31 — Cash-flow setup help tooltip layering
+- Corrected the shared tooltip stacking level in `style/visual.less`: help previously rendered behind cash-flow/document overlays. Existing global appearance and hover/focus behavior retained. No settings or calculation changes.
+- Updated `askbics-teams/test/cash-flow-scope.mjs` to mount the workspace inside the real Q&A root and verify tooltip text, hover/focus, dismissal and foreground hit-testing over Setup.
+- Verification: focused cash-flow scope browser regression passed with compiled LESS, without screenshots. No package created. Native Power BI verification remains pending after user packaging.
+
+### 2026-10-31 — Copy text from shared tables and matrices
+- Shared table renderer now enables native text selection via tableTextSelection.ts and global cell CSS, including cash-flow document tables and matrix cells. Pointer events do not initiate enclosing dashboard dragging; a completed text-selection drag does not activate row/cell selection or links. Ordinary clicks retain existing filtering. No persistent settings changed.
+- Added non-image browser regression test/table-text-selection.mjs: text and numeric drag selection under a user-select:none host, no filtering on drag, normal click filtering. Passed. Root build, tests and lint passed; Teams suite passed after retry with localhost access (initial sandbox run could not fetch local test server). No package or screenshots. Native Power BI copy/filter validation remains pending.
+
+### 2026-10-31 — Cash-flow Variance column
+- cashFlowTable adds Variance immediately after Destination amount: raw signed root amount minus the destination group amount. Grand Total recalculates unique visible starting amounts minus visible destinations, not the sum of split-row variances. Existing unresolved destination rows retain their current meaning; zero variance does not prove resolution.
+- cashFlowResults enables existing global data bars for Variance through a view-only QnaTable defaultDataBarColumns hint. Shared filters, copy/PDF and Details use the added column; source-column saved settings remain unchanged. Updated automatic-column help in workspace/settings.
+- Root build passed; root regression suite passed up to an old positional destination-column assertion, corrected to name-based lookup; that test and all remaining root tests then passed. Teams suite and focused scope/text-selection browsers (including default data-bar rendering) passed. No packaging/screenshots; live Power BI validation pending.
+
+### 2026-10-31 — Split destination display correction
+- Latest screenshot requirement overrides repeated Actual per destination: presentRows in cashFlowTable assigns signed Actual to the first visible row per unique starting posting; subsequent Actual cells are blank. Variance uses displayed Actual (blank = 0) minus destination amount. This is a display reconciliation, not a per-row unresolved balance.
+- Shared renderer applies presentation after filtering/sorting without modifying source rows/identities, before virtualization and copy/PDF. Data-bar scale/sign follows presented values. Unique-start totals unchanged; no persistent settings or tracing changes.
+- Build/lint and Teams suite passed. Root suite initially encountered a newly added test placed outside its async scope; corrected placement, then all cash-flow tests (including all remaining suite tests) passed. New non-image cash-flow-split-display browser passed initial/sorted Actual-once display, signed bars, Excel and PDF consistency; unit cases cover filtered subset/reordering/source preservation. No package. Live Power BI validation pending.
+
+### 2026-10-31 — Export actions on cash-flow detail tables
+- cashFlowResults grid helper now retains the shared Results / Copy for Excel / View PDF toolbar on path, settlement-evidence and document-entry tables. Removes only Edit, preserving fixed accounting layouts and existing global design. No calculation/settings changes or queries.
+- Root TypeScript build and focused shared cash-flow scope browser passed: each detail table has both actions; copied document headers/rows match PDF payload. Synthetic shared-renderer verification, not live host verification. No package/screenshots.
+
+### 2026-10-31 — Repeated-posting floating-point comparison
+- Added sameCashPostingAmount in cashFlowAmount.ts for repeat-value checks in cashFlowLoad/cashFlowPaging. Finite same-sign values accept at most 8 * Number.EPSILON * max(1, magnitudes), capped at 1e-7. Original loaded amount/object retained; no rounding or allocation tolerance changes. Meaningful changes, nonfinite values and opposing signs remain rejected. Partition duplicates still fail as overlaps even when amounts agree within precision.
+- Regression reproduces -154570.2 versus -154570.19999999998, verifies one retained posting, rejects a cent change, large-value changes and invalid values, and preserves partition overlap/conflict checks. Root build/full tests and Teams full suite passed. No package or live Power BI validation.
+
+### 2026-10-31 — Transaction source columns in trace tables
+- cashFlowResults traceGrid now includes CashSetup.displayColumns in path, incoming-settlement, document-entry and cashFlowReport destination-path tables. Values come from each linked posting's sourceValues/mapped fields; signed measure uses that posting's amount. Original accounting columns remain, and available-lines totals are recognized as totals rather than sortable detail rows.
+- Retains shared table header menus for sorting/filtering/resizing/data bars; shared ui adds Copy column using filtered/sorted presented rows. Escape closes the filter without dismissing the enclosing trace popup.
+- Trace Columns opens the existing shared source-column selector (up to 10). Adding/removing source columns changes the same saved displayColumns used by the main table; existing settings validation, field renaming and Copy/Paste settings apply without a new schema. Save then rerun cash flow to fetch newly selected fields. Standard trace/accounting columns remain available. No changes to traversal, allocation, company/security scope or query batching.
+- Root build/full tests/lint passed; Teams suite passed with localhost access after sandbox fetch failure. Expanded non-image scope browser passed linked-row values, export payloads, sort/filter/copy-column order, Escape, opening Columns from trace, selection changes/save/rerun and cached repeat requests. Final TypeScript build passed. Live Power BI validation pending; no package or images generated.
+
+### 2026-10-31 — Full transaction inspection
+- Added cashFullTransaction.ts, reached through View full transaction inside the existing trace popup and Needs attention processing-issue details. Shows starting payment, confirmed/unresolved or unverified status, cached discovered journeys labelled as evidence, unique document tables, original debit/credit lines including blank clearing, stopping explanations/highlights and Previous/Next issue navigation. Documents paged in groups of 20; journeys rendered on expansion. Existing shared tables retain sorting, filters, copying and PDF.
+- cashFlowReport/cashFlowResults pass discovery context; cashFlowWorkspace provides diagnostic report and explicit Load missing entries via existing company/currency-scoped, security-respecting bounded/paged loadCashLinks/fetchRows pipeline. No requests on opening; request revision and popup-active checks discard late results. Additional entries are inspection-only; rerun cash flow to recompute paths/allocations. Missing/unverified data is never promoted to resolved. No persistent configuration/schema added.
+- Root build/full suite/lint and Teams full suite passed. cash-full-transaction browser passed cached opening, blank-clearing balancing lines, candidate labels, stopping issue navigation, copy/PDF payloads, explicit loading, company isolation and close-during-load. Existing scope browser also passed integration entry and no-query opening. No screenshots/package; live Power BI validation pending.
+
+### 2026-10-31 — Copy all trace tables
+- Available document entries now has Copy all tables in the shared table toolbar style. Copies labelled path/incoming-group tables and document tables into one Excel-compatible clipboard payload, separated by blank rows. Includes collapsed paths and all document pages from loaded data; respects Selected trace lines and selected-step/entire-trace inspection scope.
+- Shared tableExport WeakMap exposes current presented columns/filtered/sorted rows and existing clipboard fallback, so combined and per-table exports use the same values, including off-screen virtual rows. No model queries, allocation changes or saved-setting additions.
+- TypeScript build, root suite, lint and focused non-image cash-flow-scope browser passed, including combined headings, filtered/sorted rows and no extra queries. Teams suite passed with localhost access. No pbiviz package; live Power BI clipboard validation pending.
+
+### 2026-11-01 — Shared multi-payment clearing groups and opt-in estimates
+- Added cashFlowGroup.ts fallback in traceCashComponents. Only wholly Allocation-unclear, complete connected components are retried; existing resolved/partially resolved allocations are preserved. Identifies selected/known bank-account source postings, including loaded outside-period evidence. Requires same sign, no outgoing bank reference, account codes and at least two contributing payments. Uses an internal balanced funding envelope with exact references into original bank posting identities to reuse the existing amount/capacity, partner/year/currency/cutoff, cycle and continuation checks as one root. Synthetic postings are removed from returned evidence. No additional model queries.
+- Fully reconciled single-GL groups attribute selected payment amounts at destination level without inferring individual invoice pairings. Mixed-GL groups expose complete group totals separately; original payment splits stay unclear by default. Optional proportional policy weights selected payments by verified group destination totals, marks every derived allocation Estimated, and retains those amounts as unverified. Output expansion capped at 10,000 payment/destination rows; group evidence retained above that bound. Related payments do not increase selected-period totals.
+- Shared policy control in Cash-flow setup and Q&A cash settings includes help; optional schema defaults to verified. Existing backup validation/merge/replace retains the enum and rejects unsupported values. Added Estimated allocations and Clearing groups report tabs; labelled allocation basis in table exports/trace/chart. Group evidence and outside-period scope are distinct from individual payment results.
+- Tests: root full suite, Teams full suite (localhost permission), TypeScript build, lint, existing cash-flow-scope browser and new non-image cash-multi-payment browser passed. Focused tests cover 60+40 vs 50+30+20, same/mixed GL, estimates conservation, shuffled order, outside-scope payments, missing/partial funding, reversals, multiple layers, company/currency/year/partner isolation and cancellation. Final targeted engine/backup tests and build passed after output bound and additional isolation assertions.
+- Limitations: conservative fallback does not replace partially confirmed components, infer unidentified bank accounts, resolve netted mixed-sign/credit/reversal groups, or repair missing downstream data. Proportional values are estimates, not historical settlement proof. Live SAP/Power BI validation pending; no pbiviz package or screenshots created.
+
+### 2026-11-01 — Trace copy menu
+- Removed the standalone Copy all tables bar from Available document entries. Its existing table Copy for Excel action now offers Copy this table / Copy all tables using the global column-menu classes. Single-table inspection keeps direct copying; other answer tables remain unchanged.
+- Reuses existing presented-row exports and combined trace exporter: filters, sort order, collapsed paths and document pages retained, no additional queries or persistent settings. Menu supports keyboard navigation, Escape without closing the popup, outside dismissal and scroll positioning.
+- Verification: TypeScript build, root full tests, lint and Teams full suite passed (Teams localhost access required). Focused non-image cash-flow-scope browser passed per-table/combined copying, filter/sort payload, Escape and no extra model queries. No package/screenshots; native Power BI validation pending.
+
+### 2026-11-01 — Cash-flow allocation status badges
+- Added always-visible Allocation status beside Destination amount, before Variance. Shared table presentation metadata renders pale rounded semantic badges while keeping original status text in sorting/filtering/Excel/PDF. Green Verified / Verified · Destination only, amber Estimated · Proportional, orange Unresolved, red Unverified and grey Not processed. Trace popup repeats badge and explanation; report header uses the entire result to avoid marking mixed results fully verified.
+- Reuses global typography and shared table layout. No model queries, calculation rules, amount data-bar changes or new saved settings. Engine statuses remain unchanged; cashFlowStatus maps display labels only.
+- Validation: root build/full tests/lint, Teams full tests and non-image multi-payment/split-display browser tests passed. Tests cover status labels/tones, same-destination and estimated UI/export text, Actual-once variance and sorting. Live Power BI validation pending. No package or screenshots.
+
+### 2026-11-01 — Grouped accounting-entry presentation
+- Available document entries now uses one shared table for document lines, one toolbar/header and a single table scroll region instead of individual document tables. Document groups collapse individually or together; sorting stays within documents and filtering recomputes Visible lines total. Selected trace lines continue to suppress document totals. Real line items remain; the repeated Grouped posting placeholder column is omitted when no item identifiers exist. Account code/description share the Account cell; user-selected extra columns remain available.
+- Added optional documentGroups presentation metadata to the shared renderer; existing answer tables are unaffected. Virtualization includes group headers/subtotals. Copy all retains collapsed document rows and current filters/sorting; per-table/PDF exports reflect the visible expanded view. Path tables initially collapsed; trace navigation and temporary row highlights retained. No queries, allocation or persistence changes.
+- Build, root regression suite, lint and Teams suite passed. Focused scope browser covers grouped exports/filtering/totals/collapse; additional 600-row grouped-entry test covers virtualization, complete collapsed export and sorting within documents. No packaging or screenshots. Native Power BI verification pending.
+
+### 2026-11-01 — Compact trace summary and visible document subtotals
+- Replaced the entry popup paragraphs/path-table disclosure with a compact starting-account → destination / allocated cash / status summary, company/start-document context and retained View full transaction. Allocation basis remains visible when applicable; completeness/original-amount help retained in context tooltip. Full transaction, diagram, allocation tabs and combined evidence exports remain available.
+- Renamed controls All entries / Trace only. Group headings show trace-account journey and entry count, with company/year/currency and clearing references below. Repeated mapped Account description is suppressed in the grouped entry presentation because Account already includes it; saved source-column choices unchanged. Accounting view delegates scrolling to its one table region.
+- Fixed blank document subtotals: shared renderer's Grand Total label-cell clearing no longer erases document-subtotal values when numeric-column inference misses debit/credit. Group description context is preserved in exported headings.
+- Root build/full tests/lint and Teams full tests passed. Focused scope browser passed totals visible, grouped copying/filtering/sorting, diagram inspection/back, updated labels and a single scrolling accounting region. No package/screenshots; live host validation pending.
+
+### 2026-11-01 — Expanded retail/cash-flow fixture and answer menu
+- Added Cash flow as third answer/analysis context-menu action below Summarize by, using existing menu/workspace. Shared ui helper reuses saved configuration, no query on opening, no automatic Rent/KPI-to-cash conversion or inferred clicked-row scope. Explicit workspace notice explains saved scope; Back preserves answer. Existing saved-state schema unchanged.
+- Added outputs/cash-flow-expanded-20261101 updated workbook/combined CSV and PowerBI_Setup.txt. Original2160 retail rows and measures retained;144 synthetic cash journal lines,71 balanced documents,14 scenarios: simple/multilevel, one-to-three, same/mixed-GL many-to-many, multiple vendor lines, exact-reference partial, ambiguous partial, missing downstream,25-document continuation, cross-year, second-company repeated IDs and receipt. New mapping columns/Scenario ID/Record Type, expected results and setup guide. Import/types/field-parameter/measure setup remains manual in Power BI.
+- Independent balanced-document/identity/retail-total assertions and all14 current-engine expected outcomes passed, including explicit proportional-estimate conservation. Root build/tests/lint and Teams tests passed. Focused non-image cash-flow-answer-menu browser passed order/open/no-query/Back for normal and analysis menus. No package or screenshots. Live Power BI integration pending.
+- Export verification: reopened XLSX read-only and compared every original Retail/Waterfall/Expected results/Read me cell; all preserved. Combined CSV has2304 rows with leading-zero identities retained,144 unique cash postings and71 balanced documents. No spreadsheet error cells found.
+
+## 2026-11-01 — Calculation Groups implementation and boundaries
+
+Latest requirement wins: non-additive totals default to Recalculate at Total Context (not Hide); Hide and Custom Total Formula are available. DAYS is inclusive and uses outer effective context, or explicit DAYS(scoped measure) binding; different operands never implicitly donate their date filters.
+
+Implemented in shared source: calculationFormula.ts (safe tokenizer/AST/evaluator/formatter), calculationGroups.ts (schema, dependencies, tokens/remapping), calculationContext.ts (supported predicates/calendar), calculationRequest.ts (model-backed independent contexts, query reuse, completeness checks), qna/calculationGroupSettings.ts (global settings editor). Integrated settings persistence/Copy-Paste merge/replace, draft preview, group/member # suggestions and removable chips, table/matrix results and serializable operand/expression breakdowns in both hosts. Matrix subtotal breakdowns use existing subtotal requests. No arbitrary JavaScript formula execution or unrestricted semantic-model querying.
+
+Verified: root build/test/lint, Teams non-packaging build/test, focused Teams calculation transport and non-image editor/chat checks. Coverage includes independent years, non-additive totals, circular references, formatter preservation, unknown/incomplete inputs, backup into an already configured visual, undo/redo, chips and matrix breakdowns. Live Power BI/Teams tenant behavior is NOT verified. No package or design images generated.
+
+Remaining scope is explicit in docs/CALCULATION_GROUPS.md: catalogue-name references require remapping after model renames (no automatic stable model-object rebinding); cross-field OR/unsupported tuple overrides fail; arbitrary raw-column aggregates require bound model measures; no new group-specific ACL or semi-additive policy; editor uses a lightweight highlighted companion, not a full IDE. Do not describe every item of the requested advanced specification as complete. Preserve existing unrelated workspace edits.
+
+## 2026-11-01 — Combined expressions with shared filters
+
+Implemented FilteredExpression AST nodes (kind filtered) around grouped arithmetic, plus bare measure identifiers. Existing quoted single-measure expressions remain compatible. Runtime context is immutable: apply shared predicates before querying every operand, inherit unrelated fields, let inner explicit predicates override the same field, and preserve independent siblings/denominators and total recalculation. Parser validates filtering commas as predicates; named-function argument commas and IN lists remain distinct. AST walkers, dependency validation, backup remapping, formatter, breakdown and editor autocomplete include filtered nodes. Help and formal grammar updated in CALCULATION_GROUPS.md. Fixed preexisting same-field OR handling for individual comparisons; no approximation of unsupported cross-field OR.
+
+Verified root build/full tests/lint, Teams full tests and focused combined-expression transport; non-image editor test covers combined comma suggestions, formatting and validation. Regression data checks actual operand filter plans, nested independent years/month inheritance, mixed arithmetic, non-additive totals, DAYS inherited scope, legacy syntax, malformed commas, depth bounds and nested circular dependencies. No package, screenshots or live-host activation. Cross-field OR/compound tuple overrides still fail explicitly under existing adapter limitations.
+
+## 2026-11-01 — Calculation settings presentation cleanup
+
+User requested professional layout consistent with global settings. Replaced narrow internal split layout with full-width editor and compact group chooser. Group settings/defaults collapse after calculations exist; calculation overrides/format/totals, preview context and management actions have named disclosures. Formula and primary actions remain visible; syntax companion is collapsed by default. Friendly select captions replace internal total/format enum text. Existing settings controls, help, saved schema and formula operations retained. No calculation-engine changes.
+
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Root build/tests and Teams build/tests pass. Non-image browser test using compiled global LESS passes CRUD/format/preview/help plus 320/460/700px width checks (formula >80% of editor width, no horizontal overflow). No package or screenshot generated; live Power BI confirmation pending.
+
+## 2026-11-01 — Calculation group reorder handle
+
+Replaced Move group up/down buttons with the shared settingsActionIcon dotted grip in the group chooser. Pointer drag/drop and Up/Down keys reorder the existing groups array, retain the selected group/formulas, restore handle focus and announce the new position. Tooltip explains both interactions. Saved settings continue using the existing ordered array; no schema or engine changes.
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs.
+Verified: npm run build, npm test, npm --prefix askbics-teams test (rerun with local fixture-server access after sandbox fetch failure), and non-image calculation-editor browser checks including drag, keyboard boundaries, selection and formula preservation. No package/screenshots created; native Power BI validation remains pending.
+
+## 2026-11-01 — Calculation group delete icon
+Reused settingsActionIcon(delete) for Delete group in src/qna/calculationGroupSettings.ts, retaining its accessible name/hover label, existing two-click confirmation and dependency guard. No persistence or calculation changes. Root build/tests, Teams tests and non-image calculation-editor check passed. No package created; live-host appearance remains unverified.
+
+## 2026-11-01 — Quoted formula value autocomplete
+Calculation editor now suggests measures and values from the effective default field while typing inside single quotes, including middle-of-token replacement and escaped apostrophes. Values use the existing bounded model catalogue loader/cache; no arbitrary model access or evaluator changes. Missing default-field guidance and formula help added. Pending suggestions are invalidated immediately on edits/Escape.
+Files: src/qna/calculationGroupSettings.ts, askbics-teams/test/calculation-editor.mjs.
+Verified root build, root tests, Teams tests and non-image editor regression (Home Living, escaped apostrophe, quoted measure replacement, existing formatting/reordering). Default field and default measure must be configured for value shorthand; available suggestions depend on loader coverage. No package/images; live Power BI validation pending.
+
+## 2026-11-01 — Compact formula completion menu
+Replaced oversized in-flow suggestion buttons with a compact dropdown anchored beneath the formula input. Shared Segoe UI/blue hover styling, 28px rows, max 164px height/360px width, no horizontal scrollbar. Keyboard active options scroll into view. No formula/persistence changes.
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs.
+Root build/tests, Teams tests and non-image browser geometry/interaction tests passed. No package/screenshots created; native-host appearance pending user verification.
+
+## 2026-11-01 — Calculation card layout simplification
+Calculation headers now contain the shared dotted reorder grip, compact Duplicate action and global delete icon. Removed separate Manage calculation disclosure and move buttons. Pointer and keyboard reorder preserve the moved card's expansion; deletion confirmation/dependency checks unchanged. Defaults & formatting uses a responsive two-column grid with full-width description/total settings. Formula starts at four rows and remains resizable. Existing formula engine and saved schema unchanged.
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs.
+Verified root build/tests, Teams tests and non-image browser checks including responsive editor widths, duplicate/reorder/delete confirmation and formula preservation. No package/screenshots. Native Power BI visual verification pending.
+
+## 2026-11-01 — Saved calculation-group list
+Calculation Groups opens with New calculation group and compact saved-group rows (name, count, edit icon, existing reorder grip). No group editor opens automatically. Edit opens group settings/calculations; Done closes the editor and explicitly notes that Save settings applies the draft. Search appears for five or more groups. Existing serialization, formulas and dependency protection unchanged.
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs.
+Passed root build/tests, Teams tests and non-image browser checks covering Done/reopen and reconstruction from saved groups without auto-expansion, plus existing CRUD, reorder, autocomplete and responsive checks. No package/screenshots; native host appearance pending.
+
+## 2026-11-01 — Calculation chat cache, editing and chip correction
+Fixed calculation responses failing structuredClone: materialized calculationNotes remain plain serializable data, and the temporary calculationDetails closure is removed before caching. KPI evaluation failures now show Unavailable with breakdown/error text. Editing a calculation question resolves internal group/member IDs to readable #names. Removed the separate calculation-selection chip strip; normal # suggestions and internal canonical IDs remain.
+Files: src/customKpis.ts, src/qna/ui.ts, style/visual.less, scripts/test-calculation-groups.cjs, askbics-teams/test/calculation-chat.mjs.
+Passed: root build, full root tests, lint, Teams regression suite and non-image calculation chat browser test. Added regression coverage for structuredClone of calculation results, preserved notes, KPI failure explanations, readable editing and no chips. No package or screenshots created. Live Power BI execution remains to be checked after the user packages/imports; tests cannot establish the user's saved formula/data validity.
+
+## 2026-11-01 — Calculation group workspaces and tab navigation
+Implemented the approved saved group list -> group editor -> calculation editor navigation in src/qna/calculationGroupSettings.ts. Group editor opens Calculations, with Defaults and Group details tabs; existing duplicate/delete protection is behind the global more icon. Calculation editor has Formula, Format & totals and Advanced tabs, breadcrumb/back navigation and visible effective defaults. Reuses global settings tabs, icons, dropdowns and help. No additional save footer or persistence schema: the existing Save settings/Cancel owns the draft. Formula edits, settings and preview-context drafts survive navigation; tabs keep mounted controls/undo history. Saved list retains reorder handles and edit icons. Scoped styling in style/visual.less.
+Verification: root build and Teams regression suite passed; non-image calculation-editor browser checks passed for responsive widths, tab navigation, draft retention, formula suggestions/format/preview, duplicate/delete and group/calculation reordering. Root full regression result recorded below. No package, images or native-host verification.
+Full root regression suite also passed.
+
+
+## 2026-11-01: Dynamic calculation field values
+Shared parser/runtime/editor now support quoted arithmetic measures and accessible field-value shorthand with a default measure. Without a default field, configured text/number fields are checked through complete, filtered model responses. Multiple matching fields require explicit selection; unavailable values fail clearly. Resolved predicates retain table/column identities. Request-local query caching and the 250-context budget remain.
+Autocomplete searches case-insensitively before limiting results, including IN/NOT IN lists and escaped apostrophes. Existing defaults, backup schema, independent scopes and total policies remain. Native/custom measure names take precedence over shorthand values. Syntax validation does not prove shorthand data availability; use preview.
+Validation: root build/full npm test, lint, Teams suite and focused calculation-editor browser test passed. No package or screenshots. Live Power BI verification remains pending.
+Limitations: suggestions are accessible-data samples. Shorthand lookup is scoped to current context/default measure and may omit blank-measure members; use explicit field predicates then. Unsupported cross-field OR still fails clearly. No arbitrary model access or security bypass introduced.
+
+
+## 2026-11-01: Aging defaults to today
+User requested no date entry for normal aging questions. src/aging.ts now captures the local calendar date once per request and uses it whenever the question omits as-of, even if an old setup contains defaultDate. Explicit ISO dates/today still work; historical balance safeguards remain. Answer text and agingView expose the resolved date. Removed the fixed-default date control from src/qna/agingSettings.ts and updated settingsLayout help. Legacy defaultDate remains serializable for backup compatibility, but is not applied; legacy validation checks its syntax without requiring an unused snapshot mapping.
+Verification: root build and full regression suite, Teams regression suite passed. After the final legacy-validation adjustment, TypeScript compilation plus aging and settings-backup tests passed. Added tests for omitted-date today, old fixed default overridden, snapshot date and summary without snapshot. No package/screenshots; native-host testing pending. Due/posting date mapping is still necessary to calculate age.
+
+
+## 2026-11-01: Field-labelled formula suggestions
+Quoted value suggestions now show Value — Field (for example Home Living — Tenant), preserving separate entries when the same value occurs in multiple fields. Selecting inserts a scoped default-measure expression with an explicit field predicate; missing default measure gives guidance rather than an ambiguous insertion. Existing explicit-filter literal suggestions remain unchanged. Reuses global completion menu and accessible value loader/cache; saved formula and backup schema unchanged. Updated formula help.
+Files: src/qna/calculationGroupSettings.ts, askbics-teams/test/calculation-editor.mjs.
+Verified root build/full tests, Teams suite and non-image editor test including duplicate labels across fields, escaped apostrophes, mid-token replacement and explicit IN/NOT IN suggestions. No package/screenshots; native host verification pending.
+
+## 2026-11-01: Calculation Groups navigation refinement
+Verified the existing groups-first navigation and completed its presentation: calculation lists show compact formula previews; the calculation editor replaces the list and hides the parent group header; duplicate/delete use the global more menu; Done returns with drafts retained. Default filter field is labelled separately from Default measure. Existing tabs, drag/edit icons, total default, formula behavior and saved schema remain unchanged. Save settings remains the persistent apply action.
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs.
+Validation: root build and regression suite passed; Teams build/regression suite passed after allowing its local HTTP test server; non-image editor test passed including Done, draft retention, menus, reordering, saved-state reconstruction and responsive controls. No package or images produced. Native host appearance remains to be tested by the user. Existing unrelated diff-check warning in scripts/test-cash-flow.cjs was left untouched.
+
+## 2026-11-01: New group opens its details
+New calculation group now opens Group details immediately, focuses and selects the group name. Existing groups still open Calculations. Navigation-only state; saved schema unchanged. Updated src/qna/calculationGroupSettings.ts and askbics-teams/test/calculation-editor.mjs. Root build/full tests, Teams tests and non-image editor test passed, including first/second creation focus and existing-group navigation. No package or screenshots; live Power BI verification pending.
+
+## 2026-11-01: Compact calculation-group workspace
+Inside an opened group, added group switch buttons with counts, search by calculation name/formula/description, New group action, calculation count and primary Add calculation styling. Calculation rows retain formula previews and global edit/drag icons and now expose the global more menu directly. Search is local presentation only and retains per-group draft text. Saved groups remain the initial view; New group still opens details with name focus; full calculation editing replaces the list. Default/format/total behavior and persistence schema unchanged.
+Changed src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Root build/tests, Teams build/tests and non-image browser editor checks passed, including search, empty state, group switching, menu Escape, drafts and saved reconstruction. No package or screenshots generated. Native Power BI/Teams visual appearance not live-verified.
+
+## 2026-11-01: Calculation tenant-value priority and scalar totals
+Source fixes: src/parameterQuery.ts preserves longer known field values before matching shorter measure/calculation names (NOVA no longer consumes Nova Fashion). src/fieldParameterTrial.ts scalar adapter propagates modelResultComplete and recognizes single AdvancedFilter Is predicates as fixed-member contexts, as well as Basic In. This lets formula equality filters obtain a scalar from the fixed grouped member and preserves incomplete-data rejection. No settings schema/UI changes.
+Added scripts/test-calculation-retail.cjs to root npm test. Reads outputs/askbics-expanded-20261025/askBICS_Sample_Retail_Data.csv and exercises calculationView through the actual host answer/scalar adapter with synthetic filtered model aggregation. Verified Home Living yearly 513130/520828/528640/536570/544618 (total 2643786); Nova Fashion 478525/452034/454892/429574/432433 (total 2247458). Tests ordinary Nova Fashion questions, #test by Year, scalar values, non-additive ratio total and incomplete scalar metadata. Screenshot NOVA values match this dataset. Home Living's blank yearly cells did not reproduce with the shown group defaults; saved calculation overrides or live diagnostics still needed if it persists.
+Checks passed: npm run build, npm test, updated retail regression, npm run lint, npm --prefix askbics-teams test (initial restricted local-server fetch failed; rerun with permitted local HTTP access passed). Live Power BI/Teams not verified. No pbiviz package or images generated. Existing unrelated workspace changes preserved.
+
+## 2026-11-01: Dismiss formula suggestions
+Added a compact sticky Suggestions header with the shared outline close action in Calculation Groups. Clicking Close suggestions cancels pending suggestion work, clears the popup, preserves formula/caret and returns editor focus; Escape also works from inside the popup. Completion keyboard navigation excludes the close action; typing reopens suggestions. No saved-state changes. Files: src/qna/calculationGroupSettings.ts, src/qna/settingsActionIcon.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs.
+Verification: root build/tests, Teams tests and non-image browser editor test passed (close, Escape, unchanged text, focus, reopen and Enter completion). No package or screenshots. Live Power BI verification pending.
+
+### 2026-11-01: Group navigation order
+Calculation group tabs now follow Group details → Defaults → Calculations. Existing/new-group initial-tab behavior is preserved. Root build/tests, Teams tests and calculation-editor browser checks passed; no packaging or live-host verification.
+
+## 2026-11-02: Caret-positioned formula completions
+- Shared calculation editor now positions the compact suggestion popup at the textarea caret (including wrapped/scrolled text), with type markers, initial selection and keyboard hints. Ctrl+Space reopens suggestions; existing mouse/keyboard insertion, close and Escape remain. Available metadata/value sources and formula evaluation are unchanged.
+- Files: src/qna/formulaCompletionPosition.ts, src/qna/calculationGroupSettings.ts, style/visual.less; expanded non-image calculation-editor browser regression for caret position and Ctrl+Space.
+- Checks passed: root build/tests/lint, focused calculation-editor browser test, Teams tests (rerun with local-server access after sandbox fetch failure). No package or screenshots. Live Power BI not verified. No persistent schema changes. Unrelated existing git diff-check warning in scripts/test-cash-flow.cjs left untouched.
+
+## 2026-11-02: Prefix-only formula suggestions
+- Suggestions now require a nonempty typed prefix and match names/values case-insensitively from the start, before limiting results. Empty input, opening parentheses/quotes, commas and empty filter values do not list everything or fetch distinct values. Ctrl+Space reopens only matching suggestions.
+- Field completion filters partial bare/bracketed field names; existing used-field exclusion, metadata boundaries, async revision guards and formula insertion remain. Formula help updated; no persistence or calculation-engine changes.
+- Files: src/qna/calculationGroupSettings.ts, askbics-teams/test/calculation-editor.mjs. Root build/tests/lint, Teams tests and focused non-image browser test passed. Browser checks cover blank prefixes, lowercase function matching, mixed-case bracketed fields and existing value insertion. No package; live Power BI not verified.
+
+## 2026-11-02: Live formula syntax error indicators
+The shared Calculation Groups editor marks invalid syntax with a red border/message and compact error excerpt highlighting the exact character. Go to error selects the parser-reported character without changing source text; correction clears the error state. EOF errors show a marked insertion point. Existing syntax preview and formula evaluation are preserved. Help text updated; no persistent configuration change.
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Focused browser regression verifies duplicate comma position, jump selection and correction. No package or screenshots; live-host validation pending.
+Verification: root build/tests/lint, Teams tests and focused calculation-editor browser regression passed.
+
+### 2026-11-02 — Readable calculation names in restored composer
+- Fixed `src/qna/ui.ts` restoreState and Teams resumeLatestQuestion to convert stored #calc/#metric identifiers into current readable names in the composer. Saved execution questions retain stable identifiers; restoring Power BI state still performs no query.
+- Added regression coverage in `askbics-teams/test/calculation-chat.mjs` for last-question fallback, legacy token drafts, Teams drafts, ordinary text and resubmission with stable IDs.
+- Verified: root build and npm test, Teams npm test (local-server access required), focused calculation-chat browser test with supported Node runtime passed. No package or screenshots created; native host activation remains unverified. No setting/schema changes.
+
+## 2026-11-02: Formula typing assistance and inline error marks
+- Shared editor pairs parentheses, field brackets and quotes, wraps selections, skips existing closers, and leaves comments/quoted content untouched. Existing undo/redo and prefix-only suggestions are retained. Field-value completions now display Value — Field; completing an automatically paired field consumes its closing bracket.
+- Added a pointer-transparent editor underline layer for exact parser/unknown-name error positions; existing diagnostic excerpt and Go to error remain. Local catalogue validation flags unknown fields/functions/measures without model queries; shorthand values with defaults still require model preview for availability/ambiguity.
+- Files: src/qna/formulaTyping.ts, src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. No persistence/schema or execution changes. Help updated.
+- Root build/tests/lint and Teams tests passed; focused non-image editor coverage includes error marks, delimiter pairing, comments, quotes, completion and narrow layouts. No package or screenshots; native Power BI activation unverified.
+
+## 2026-11-02: Calculation items displayed as rows
+- Latest requirement replaces the earlier calculation-columns presentation. Shared customKpiRequest now renders Calculation Group answers as a long table: grouping fields, Calculation, Value. Scalar and matrix-shaped requests also use this row layout; ordinary native-measure/legacy-only answers remain unchanged.
+- src/calculationRows.ts preserves formatted/raw values, per-cell breakdowns, source indices and model selection scope. Each item has its own total row using existing total-context evaluation. No aggregate total across unlike calculations is produced. UI drill actions use the original row measure, and generic percent-of-grand-total derivation is disabled for this mixed-metric Value column.
+- Corrected breakdown lookup to use typed model selections for numeric grouping labels. No formula, persistence schema or model query changes; saved answers need rerunning to receive the new layout.
+- Regression: root build, npm test, lint, Teams npm test, and non-image calculation-rows browser test passed. Teams local HTTP tests required running outside restricted networking. Added retail assertions for both table/matrix requests, scalar rows, totals, raw values and selection scope; updated Teams transport assertions. No pbiviz package or screenshots. Live Power BI cross-filtering/activation remains to be verified. Existing unrelated scripts/test-cash-flow.cjs EOF whitespace warning remains.
+
+
+## 2026-11-02 — Compatible Calculation Group operand batching
+- Source verified: calculationRequest previously loaded each native operand separately. Power BI field-parameter requests and the Teams adapter both apply one filter context per request.
+- Changed shared `src/calculationRequest.ts` to plan compatible arithmetic dependencies, batch native measures by identical effective filters/grouping (maximum 16 per request), and cache per-measure projections and row indexes. Anchor queries reuse these batches. Total-context queries remain separate from grouped queries; no summing displayed ratios.
+- Independent operand filters remain separate requests. Conditional/function branches remain lazy; shorthand value discovery still uses supported model lookups. This is not arbitrary per-operand DAX pushdown and does not guarantee one query for all formulas.
+- Regression fixtures now support multi-measure responses; same-context ratio uses 2 transport calls instead of 4 (grouped inputs plus total inputs). Tests cover independent years, nested/shared filters, incomplete-data rejection, totals and retail values. No persistence/schema or UI changes; no package created. Native Power BI performance/activation still needs user testing.
+
+Validation: root build, full npm test, lint and Teams full regression suite passed. Teams required local HTTP test-server access outside the sandbox after its initial fetch restriction. Focused batching tests also passed for 17 operands split into 16+1 requests. No live Power BI timing claim.
+## 2026-11-02 — Calculation request and local processing optimization
+- Shared src/calculationRequest.ts now reuses original batched tables and one row index instead of allocating per-operand projections. Anchor row unions scan each shared response once. Metric/filter/value resolution is memoized within the request, including defaults and effective scope; no persistent or cross-model cache.
+- Reuse grouped-response totals only when modelEvaluatedTotals explicitly marks a finite native total as model evaluated. Never reuse synthesized row sums or unknown totals. Non-additive formulas still evaluate in total context with independent operand filters.
+- Regression: compatible ratio drops from 2 to 1 calculation transport requests when verified model totals are supplied; without that marker it retains 2. Added tests reject fallback totals. Teams test asserts 2 calculation DAX statements (grouped data + model totals), excluding catalogue queries. Different filter contexts remain separate under current adapters; this is not universal single-DAX execution.
+- Files: src/calculationRequest.ts, scripts/test-calculation-groups.cjs, askbics-teams/test/calculation-groups.mjs.
+- Validation: root npm run build, full npm test, npm run lint, Teams full npm test, and focused Teams calculation test passed. Teams suite required local HTTP access outside restricted networking. An initial test assertion counting catalogue lookups as calculation queries was corrected to count measure-data queries only.
+- No UI, settings schema or persistence changes, no package created. Actual Power BI/Teams activation and real-data latency remain unverified.
+
+## Calculation Groups reference-layout adaptation — 2026-11-02
+
+Implemented the supplied HTML design direction in the shared settings UI (src/qna/calculationGroupSettings.ts and style/visual.less): saved groups open the first group's Calculations tab; compact group switching/search and calculation rows remain visible while editing on wider panels; the selected row is highlighted and the inline editor appears beneath. Narrow panels hide the list during editing. New group still opens Group details with name focused. Global edit/delete/close icons and existing reorder/dependency safeguards remain. Formatting, totals and overrides are grouped under Advanced options. Done and Close editor retain drafts; Save settings remains the persistence boundary. No formula/query, schema or host-adapter changes in this UI task.
+
+Verification: npm run build, npm test, npm --prefix askbics-teams test and npm run lint passed. The non-image calculation-editor browser regression passed CRUD, draft preservation, group switching, formatting/validation, autocomplete/help, and responsive widths 320/460/700/850 including overflow and list visibility checks. Live Power BI/Teams validation remains pending. No package or preview images created.
+
+## Calculation Groups navigation correction — 2026-11-02
+
+Supersedes the previous reference-layout adaptation: removed the separate saved-group-list/back route and the Group details / Defaults / Calculations secondary tabs. Saved group names are now the primary tabs, followed directly by the selected group's calculation list and Add calculation action. Group settings opens name, description, enable state and defaults together; Done returns to calculations. New group immediately opens these settings and focuses its name. Empty state has only the create action. Preserved group reorder (drag and keyboard), duplication, dependency-protected deletion, calculation editing, drafts and global Save settings. No persistence schema, formula or query changes.
+
+Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Build, root regressions, Teams regressions and lint passed; browser editor regression passed including primary-tab navigation, keyboard switching, responsive layout, CRUD and draft preservation. No screenshots/package; live Power BI/Teams verification pending user packaging/import.
+
+## Calculation Groups action wording — 2026-11-02
+
+Simplified creation labels: Add group in both empty and saved-group states; Add calculation / KPI only inside the selected group. Updated section help and empty-group explanation to clarify the hierarchy. Existing tab navigation, formula behavior and persistence unchanged. Files: src/qna/calculationGroupSettings.ts, src/qna/settingsLayout.ts, askbics-teams/test/calculation-editor.mjs. Build, root/Teams regressions and non-image editor browser test passed. No package; native-host confirmation pending.
+
+
+## 2026-11-02 — Calculation KPI rows with year columns
+- Supersedes the long Year / Calculation / Value layout for a single configured year grouping. Calculation Groups now show one row per KPI, chronological year columns, and a per-KPI Grand Total column. Other grouping layouts and native-only answers are unchanged.
+- Shared presentation pivots already evaluated values, raw values, breakdown notes and per-cell model/source selection context; adds no queries and never sums ratios or unlike KPIs. Duplicate cells retain the original layout rather than overwrite data. Global table header handling retains simple year/Grand Total labels; total drilldown does not require a year selection.
+- Files: src/calculationRows.ts, src/customKpis.ts, src/qna/ui.ts, scripts/test-calculation-retail.cjs, askbics-teams/test/calculation-rows.mjs.
+- Checks: build, root regression suite, lint, Teams regression suite and non-image calculation-rows browser test. Native Power BI activation/cross-filtering still requires user packaging/import and rerunning the question. No package generated or persistence schema changed.
+
+## 2026-11-02 — Readable calculation hover context
+- Replaced raw Power BI filter JSON in shared calculation explanations with catalogue display names, readable comparison/IN predicates and effective grouping values. Each operand retains its own context; numeric values, query planning, caching and allocation logic are unchanged. Unknown filter shapes are labelled additional model filter rather than exposed as JSON.
+- Files: src/calculationRequest.ts, scripts/test-calculation-groups.cjs. Regression checks cover actual field labels, independent operand filters and range predicates without schema/internal column JSON.
+- Validation: root build and full root/Teams suites passed. Teams local HTTP test initially failed under sandbox restrictions; rerun with local-server access passed. No package created. Live host hover verification remains pending user packaging/import.
+
+## 2026-11-02 — Formula editor inline diagnostics and value completion
+- Removed the duplicated error excerpt and Go to error action. The existing editor underline and red diagnostic now appear together directly below the formula input; optional syntax preview remains collapsed.
+- Completion handles a quoted prefix at the caret and immediately after a closing quote. Shorthand value suggestions search accessible fields with the default field first instead of excluding other fields. Explicit field predicates retain field-scoped suggestions and case-insensitive prefix matching. No values are invented or security boundaries changed.
+- Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Updated contextual help. No persistence or formula-evaluation changes.
+- Passed root build, full root tests, lint, full Teams tests and non-image calculation-editor browser regression, including sout/South for Zone with Tenant default and both open/closed quotes. Teams local HTTP suite required rerun with local-server access after sandbox fetch failure. Native Power BI accessible-value availability still needs testing after user packaging/import. No pbiviz or images created.
+
+## 2026-11-02 — Calculation shorthand query optimization
+- Explicit default filter fields now resolve shorthand directly into a typed predicate, without a member-discovery request. Unknown defaults and invalid numeric values fail clearly; unmatched values retain model blank semantics. Model security/filtering still applies.
+- Query preplanning includes default-field shorthand, allowing it to batch with explicit native operands under identical filters/grouping. Different contexts remain independent.
+- Discovery without a default field retains ambiguity checks. A complete, single-member equality-filtered response can supply its raw scalar value for the exact same filter context. No visible-row summation, incomplete input reuse, cross-session cache or persistent schema change.
+- Inspected fieldParameterTrial request reset logic: retained clear/acknowledgement safeguards when predicates change. Fewer redundant requests reduce transitions without weakening stale-filter protection.
+- Files: src/calculationRequest.ts; scripts/test-calculation-groups.cjs; scripts/test-calculation-retail.cjs. Retail regression verifies three adapter requests (year anchor + two tenant queries) for five years and correct recalculated totals. Tests also cover shorthand/explicit compatible batching, invalid default fields, independent contexts, incomplete results and non-additive totals.
+- Passed npm run build, npm test, npm run lint, and Teams tests with supported Node runtime. Teams local HTTP test initially failed under sandbox network restrictions; rerun with local-server access passed. Focused calculation tests passed again after adding the batching assertion.
+- No package, images or deployment. Million-row live-model performance is not verified; aggregation remains model-side and existing query/completeness limits remain enforced.
+
+### 2026-11-02 — Focused Calculation Groups workspace
+- Calculation editor now replaces group navigation, group actions, search and calculation list at every width; Back to the named group and Done retain draft changes. External Save settings / Cancel remains the persistence boundary.
+- Group settings moved into Group actions; list delete uses the existing more menu instead of a redundant standalone action. Formatting, totals, description and overrides remain in collapsed Options. Existing group tabs, counts, drag ordering, new-group name/defaults form, formula completion and inline diagnostics retained.
+- No calculation engine or settings schema changes. Source: src/qna/calculationGroupSettings.ts. Browser coverage: askbics-teams/test/calculation-editor.mjs, including narrow/wide focused layout, CRUD, draft navigation, ordering, preview and help.
+- Build and focused browser regression passed; full root/Teams checks recorded below when complete. No package or screenshots created; live Power BI validation remains pending.
+- Final verification: npm run build, focused calculation-editor browser regression, npm test, npm run lint and Teams tests passed. Teams local HTTP test required a rerun with local-server access after sandbox fetch failure. No packaging or live-host verification.
+- 2026-11-02: Corrected Calculation Groups action popup to compact vertical labelled menu (Group settings, Duplicate group, Delete group), using global colours/icons and hidden-state protection. TypeScript build passed; no package created.
+
+### 2026-11-02 — Compact calculation editor controls
+- Smaller Format and Validate toolbar above the formula; model preview and its optional context remain available in collapsed Preview. Options use compact two-column rows at normal settings widths (single column below 340px); long total/description fields span the row.
+- Reduced card, label and options spacing without changing formula execution or persistence. Existing help and preview validation retained. Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs.
+- TypeScript build, root tests and focused browser tests passed, including paired format/decimal controls, compact spacing and model preview. No package or images created; native Power BI appearance remains to be tested after packaging.
+- Lint and all Teams tests passed; local HTTP test required local-server access after sandbox fetch failure.
+
+### 2026-11-02 — Calculation Groups settings backup assurance
+- Source verified that saved calculationGroups already participate in settings export, catalogue/dependency validation, semantic renamed-field mapping, merge/replace and application through the shared backup UI. Added explicit backup description and copied group/calculation counts so users can confirm inclusion.
+- Added settings-backup regressions for JSON round trip of IDs/order, descriptions, formulas/references, group and item defaults, enabled state, number formatting, decimals, all total modes/custom formulas, merge/replace, and blocked missing model fields/measures/dependencies. No schema change; save pending settings before copying.
+- Files: src/qna/settingsBackupView.ts, scripts/test-settings-backup.cjs. Build passed; regression results follow. No package or images created.
+- Verification passed: npm run build, npm test (including calculation backup coverage), npm run lint, and 22 Teams tests. Teams local endpoint required rerun with local HTTP access. Live copy/paste in packaged Power BI remains unverified.
+
+### 2026-11-02 — Hash group autocomplete continuation
+- Fixed hash completion swallowing all subsequent question text. If the active hash search has no matches, normal field/value/measure suggestions resume. Hash and ordinary completion now use the caret position; bounded replacements preserve following question text while editing before a group or in the middle of a question.
+- Shared UI source: src/qna/ui.ts. Extended calculation-chat browser regression covers group placement at start/middle/end, later field/value/measure routing, bounded group replacement, and normal completion before a trailing group. Stable internal IDs and submitted questions remain supported.
+- Build and focused browser regression passed. No package/screenshots; native Power BI validation still required before release.
+- Final verification: build, root regression tests, lint, calculation-chat browser tests and 22 Teams tests passed. Teams local HTTP test required a rerun with local-server access after sandbox failure.
+
+### 2026-11-02 — Calculation columns with multiple grouping fields
+- Removed the single-group-only Year pivot restriction. Calculation items stay in rows with remaining grouping fields (for example Company Code), while Year or explicitly selected matrix column fields become columns. Preserved explicit matrix column choices before calculation evaluation normalizes its input to a table.
+- Per-row-group Grand Total uses a separate formula evaluation in the row-group context, never a sum of ratios. Pivot preserves formatted/raw cells, notes, row/cell selection scopes, missing cells and editor row/column roles. Duplicate pivot cells retain the original table rather than overwrite data.
+- Sources: src/calculationRows.ts, src/customKpis.ts. Added retail integration tests for multi-group Year columns, explicit (c), recalculated ratios and scopes; extended calculation-rows browser test for Company Code, missing year cells and source cell indices. Build, root tests and focused browser passed. Additional totals require supported model context requests; no package/images created; native Power BI validation pending.
+- Final verification: TypeScript build, root suite, calculation-rows browser regression, lint and 22 Teams tests passed. Teams local HTTP endpoint required rerun with local-server access after sandbox fetch failure.
+
+### 2026-11-02 — Alternate calculation quote delimiters
+- Added paired-apostrophe delimiters: (''Rental'') is equivalent to ('Rental'); existing double-quoted text remains supported. The shared quote reader is used by tokenizer, formula suggestions and delimiter pairing. Formatting preserves token spelling; autocomplete may insert canonical single-quoted text.
+- Ordinary empty strings and apostrophe escapes remain supported; malformed paired strings report Unclosed quoted text. Updated formula help and docs/CALCULATION_GROUPS.md with delimiter/escape rules.
+- Tests cover AST equivalence, mixed arithmetic/filter/IN strings, apostrophes, malformed quotes, formatting, remapping, evaluation, settings backup preservation, and browser suggestions for paired-quoted names and values. Build, root suite, focused calculation tests and editor browser passed. No package/images created; live host verification pending.
+- Files: src/calculationFormula.ts, src/qna/calculationGroupSettings.ts, src/qna/formulaTyping.ts, scripts/test-calculation-groups.cjs, askbics-teams/test/calculation-editor.mjs, docs/CALCULATION_GROUPS.md.
+- Final verification: npm run build, npm test, focused calculation parser/backup and editor-browser tests, lint and 22 Teams tests passed. Teams test endpoint required local HTTP access after sandbox fetch failure.
+
+### 2026-11-02 — Names-first KPI table within calculation groups
+- Reviewed user HTML as a design reference, then reused shared settings styling/icons and the focused formula editor. Each group now has a compact Name / Status / Actions table, name input + Add KPI (Enter supported), search, drag ordering, Edit and actions menu with Rename/Duplicate/Delete. Rename updates formula dependencies while preserving IDs.
+- New names are disabled empty-formula drafts, not invented placeholder measures. They can be saved/backed up/imported; unfinished entries stay out of answers. Enabled empty formulas are blocked by group validation and KPI compilation. Done validates/enables a newly defined draft unless the user explicitly chooses disabled; Back/Close keeps drafts, Preview evaluates a temporary enabled copy.
+- Empty disabled definitions are accepted without parsing; nonempty invalid syntax and dependency checks remain strict. Added formula help/status explanation, updated docs/CALCULATION_GROUPS.md, settings round-trip and compiler/dependency tests, and browser coverage for consecutive names, duplicates, draft reload/rename, editing, ordering and preview.
+- Files: src/qna/calculationGroupSettings.ts, src/calculationGroups.ts, src/customKpis.ts, style/visual.less, scripts/test-calculation-groups.cjs, askbics-teams/test/calculation-editor.mjs. Build, root suite, lint and focused browser passed; no package/images created; native Power BI verification pending.
+- Final verification: build, full root tests, lint, extended calculation-editor browser tests (including duplicate group with drafts), and 22 Teams tests passed. Teams local HTTP test required local-server access after sandbox fetch failure. Draft storage uses the existing formula/enabled properties, preserving backup compatibility.
+
+### 2026-11-02 — Compact calculation hover and full evidence dialog
+- Condensed calculated-cell hover to calculation/period, formatted result, source labels and relevant context. Removed repeated raw leaf/tree/Result lines from hover; simple division and DIVIDE show numerator, denominator and formatted result once. Complex expressions and unavailable results retain meaningful summaries without inventing two-operand breakdowns.
+- Added a small keyboard-accessible cell details action, opening the original cached notes/tree in the shared global modal pattern. No model queries, persistent schema or selection scopes changed. Close/Escape restores focus; original breakdown remains available for investigation.
+- Sources: src/qna/calculationTooltip.ts, src/qna/ui.ts, style/visual.less. Added unit checks in scripts/test-calculation-groups.cjs and browser hover/dialog/focus checks in askbics-teams/test/calculation-rows.mjs; updated docs/CALCULATION_GROUPS.md. No package/images created. Native host validation pending.
+- Final verification: build, full root suite, lint, calculation-rows browser regression (hover, full evidence, focus restoration and no selection side effect) and 22 Teams tests passed. Teams local HTTP endpoint required local-server access after sandbox fetch failure.
+
+### 2026-11-02 — Calculation action menu icon consistency
+- Replaced mixed text/icon-only KPI menu items with labelled outline Duplicate, Rename and Delete actions in list/editor menus; kept existing accessible names and handlers. Added shared duplicate and rename glyphs plus settingsMenuAction helper, and compact 32px aligned menu rows with a restrained destructive tone for Delete.
+- Files: src/qna/settingsActionIcon.ts, src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Browser coverage verifies visible labels, SVG icons, compact row heights and existing menu operations. Build and focused browser passed; no package/screenshots; live Power BI appearance pending.
+- Final checks passed: build, full root regression suite, lint, calculation-editor browser test and 22 Teams tests. Teams local HTTP endpoint required rerun with local-server access after sandbox fetch failure.
+
+### 2026-11-02 — Single-row KPI entry and search toolbar
+- Combined New KPI name, Add KPI and local search into one compact row at normal widths. Added an outline search glyph and global close-icon clear action; Escape clears a nonempty search and retains focus. Search wraps to a full second row only below 400px of editor width.
+- Existing name-first drafts, per-group search, filtering and formula operations retained. No persistent schema or model-query changes. Clear action explains its scope; it does not delete KPIs.
+- Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Build and focused browser passed, including one-row alignment, narrow wrapping, clear/focus and Escape checks. No package/images; native host appearance pending.
+- Final verification passed: build, full root suite, lint, calculation-editor browser tests and 22 Teams tests. The Teams local HTTP test required local-server access after sandbox fetch failure.
+
+### 2026-11-02 — Removed local KPI search
+- Removed the local Search KPIs input, icon, clear action and transient search state from Calculation Groups at user request. The KPI name input now fills available width beside Add KPI; all KPI rows remain visible. Global settings search and group navigation are retained.
+- Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Build and focused browser passed, including absence of local search and continued name-first draft/edit/menu flows. No schema changes, package or screenshots; native host verification pending.
+- Final verification: build, full root tests, calculation-editor browser test and 22 Teams tests passed. Teams local HTTP test required local-server access after sandbox fetch failure.
+
+### 2026-11-02 — Compact borderless Calculation Groups actions
+- Removed permanent button borders/backgrounds from the Calculation Groups edit, overflow and close controls; icons are 15px within compact 28px targets, with subtle circular hover and visible keyboard focus. Back now uses the shared arrow plus a short borderless Back label, retaining its full accessible group name.
+- Scope is Calculation Groups only. Add/save actions, labelled action menus, navigation handlers and draft persistence remain unchanged.
+- Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Build and browser regression passed, including computed border/icon/control sizes and existing editor operations. No package/images; native Power BI appearance pending.
+- Final verification: build, full root suite, lint, calculation-editor browser tests and 22 Teams tests passed. Teams local HTTP endpoint required local-server access after sandbox fetch failure.
+
+### 2026-11-02 — Compact connected group tabs
+- Calculation Groups now uses 28px connected tabs in the existing light/blue theme. Drag the tab itself to reorder; removed the separate visible group drag handles. Active group and drafts remain intact during reorder. Long names truncate with a full-name tooltip and the strip scrolls horizontally when needed.
+- Keyboard: Left/Right/Home/End select groups; Alt+Left/Right reorder the focused tab. Existing KPI row handles remain unchanged. Uses the existing saved group order, with no persistence schema changes.
+- Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Build, root regression suite, lint, focused browser (compact size, connected spacing, direct drag and active-group preservation), and all 22 Teams tests passed. Teams local HTTP test needed local-server access after sandbox fetch failure. No package or screenshots created; live Power BI appearance/interaction remains to be verified.
+
+### 2026-11-03 — KPI formula previews and Options shortcut
+- Added a compact shared settings icon in an Options column before Status in each KPI row. It opens the existing editor with Options expanded and focused; format, totals and overrides reuse the same controls and draft state.
+- Formula text now appears below each KPI name in muted grey, single-line with ellipsis and full formula on hover. Empty drafts show No formula yet. No new queries or persistence schema changes.
+- Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Build, root tests, focused browser regression and 22 Teams tests passed (Teams local HTTP required local-server access). No package/images; native Power BI check pending.
+
+### 2026-11-03 — Calculation KPI typing suggestions
+- Regular chat autocomplete now includes enabled, defined KPIs from enabled calculation groups using case-insensitive partial names, labelled (Calculation KPI) in the existing suggestion style. Selection inserts the readable #KPI reference, then the existing submission path resolves stable metric identifiers. Hash-mode KPI suggestions carry the same label plus group context.
+- Draft/disabled KPIs stay excluded; existing fields, measures and values remain available. No extra model requests or persistence changes.
+- Files: src/qna/ui.ts, askbics-teams/test/calculation-chat.mjs. Build, root tests, lint, focused chat browser regression and all 22 Teams tests passed (local HTTP access needed after sandbox failure). No package/images; native Power BI verification pending.
+
+### 2026-11-03 — Visible KPI mouse dragging
+- KPI row now follows the pointer vertically when dragging its grip, with a light lifted-row treatment and directional blue drop line. Corrected target styling to apply to actual table rows rather than the hidden editor cards. Pointer cancellation/lost capture clears drag styling; existing keyboard movement and saved array order remain.
+- Files: src/qna/calculationGroupSettings.ts, style/visual.less, askbics-teams/test/calculation-editor.mjs. Build, root regression suite, lint, focused mouse-drag browser regression and 22 Teams tests passed (Teams local HTTP required local-server access after sandbox failure). No package/images; live Power BI dragging remains to be checked. No persistence schema changes.
+
+### 2026-11-03 — Formula suggestions
+Shared formula autocomplete now displays synchronous accessible catalogue values before asynchronous field lookups finish, checks the default field first, and renders incremental results with stale-request guards. Typing debounce is 60ms. Tech Hub prefix insertion covered by focused editor regression. Root build/tests/lint and browser test pass; Teams build passes but local HTTP pilot fetch failed in full suite. No packaging/live verification. No persistence changes.
+
+### 2026-11-03 — Formula preview tooltip
+Muted KPI formula previews explicitly use the global tooltip attribute (also focusable), avoiding title deduplication when full text equals underlying textContent. Build/editor regression passed; no package or live-host verification.
+
+- 2026-11-03: KPI Options uses the shared outline sliders icon (settingsActionIcon.ts); other settings gears remain unchanged. Build and focused editor regression passed; no package created.
+
+- 2026-11-03: Calculation editor uses Back with group/KPI breadcrumb; redundant editor Close icon removed. Settings dialog close remains. Build/editor regression passed.
+
+- 2026-11-03: Formula editor now renders syntax colouring inline, without a duplicate Syntax preview. Shared textarea overlay retains editing/diagnostics. Build and focused editor tests passed; no package.
+
+- 2026-11-03: Formula editor increased to nine rows / 190px minimum, preserving caret autocomplete and errors directly below. Build and focused editor regression passed; no package.
+
+### 2026-11-03 — Calculation matrix calendar columns
+- Fixed src/calculationRows.ts to compare column dimensions individually using the shared time-label comparator for year/month fields; combined Year / Month headings now default to chronological order. Other categories keep natural ordering; downstream user sorting is unchanged.
+- Added regression coverage in scripts/test-field-layout.cjs for Jan–Dec, multiple years, full month names and retained raw values/source indices/notes.
+- Verified: npm run build, npm test and focused Teams calculation-rows.mjs passed. Full Teams suite: 11 passed, one demo HTTP endpoint test failed with fetch failed. No package or live Power BI verification.
+
+### 2026-11-03 — Compact cash-flow scope and pinned result actions
+- Successful cash-flow runs collapse starting controls into a company/currency/period/posting-count summary; native disclosure reopens editing. Status remains outside the collapsed section, retaining incomplete-data warnings. Errors and invalidation keep controls open.
+- Result presentation projects columns so Destination amount and Details occupy the frozen right edge. Existing selected source columns, reconciliation values, filtered totals, exports and row-detail identity remain available; no calculation, query or persistence schema change.
+- Files: src/qna/cashFlowWorkspace.ts, src/qna/cashFlowResults.ts, style/visual.less; new askbics-teams/test/cash-flow-compact.mjs.
+- Verified: npm run build, full npm test, full Teams npm test; focused non-image Chromium regression at 800/600px checks collapse/reopen, visible pinned amount/action and trace-dialog navigation. Browser check uses bundled Node 24 because default Node 18 is unsupported by Playwright. No packaging, screenshots or deployment; native Power BI verification remains pending after user package/import.
+
+### 2026-11-03 — Payment overview with expandable destinations
+- Cash-flow results now default to one expandable row per original starting-posting identity (company/year/document/item), retaining separate bank lines when document numbers repeat. Payment amount appears once; status considers all loaded allocations for that payment. Child destination rows retain individual allocation evidence, signed amounts, status, filtered totals and trace actions.
+- View trace stays visible on the responsive payment summary; detailed source columns, flat exports and Variance remain accessible through Detailed table. Default overview contains no Variance. Views are transient; saved columns/settings, tracing and query semantics are unchanged.
+- Files: src/qna/cashFlowResults.ts, style/visual.less, askbics-teams/test/cash-flow-compact.mjs. TypeScript build and root regression suite passed. Non-image browser check passed: collapse/reopen scope, one payment with four unmerged allocations, hidden default variance, child trace identity, detailed pinned columns and 800/600/400px action visibility. Teams verification recorded below. No package, screenshots or deployment; live Power BI appearance remains pending user package/import.
+- Final verification: full Teams regression suite passed, including all 22 integration tests. No package created.
+
+### 2026-11-03 — Restore shared transaction-style cash-flow results
+- User superseded the expandable payment design with the supplied existing table screenshot. Removed the payment overview and view switch, restored original cashFlowTable column order with visible Variance, allocation status, Details/View trace and Grand Total. Removed grouped and pinned-column styling; retained earlier scope collapse/reopen behavior.
+- Source changes limited to src/qna/cashFlowResults.ts and style/visual.less; updated askbics-teams/test/cash-flow-compact.mjs. Existing calculation, allocation, query and saved settings semantics retained.
+- TypeScript build and focused non-image browser regression passed (column order, visible Variance, split-allocation export totals, trace navigation and scope collapse). Full regression results follow. No package or deployment; native Power BI verification pending user import.
+- Final verification: full root and Teams regression suites passed. No package created.
+
+### 2026-11-03 — Light cash-flow entries popup layout
+- Scoped CSS only: entries table fills the popup content width, summary/control gaps are tighter, and the table wrapper is the single vertical scroll owner. Background cashflow scrolling is suppressed while the entries popup is open. Existing transaction-table structure, grouping, totals, tabs and operations retained.
+- Files: style/visual.less and askbics-teams/test/cash-flow-compact.mjs. Non-image browser checks passed at 800/600px for full-width card, one scroll owner, containment, plus existing trace/export/totals behavior. Changes isolated in a labelled CSS block for straightforward reversal. No package or screenshots created; live Power BI verification pending user import.
+- Final checks: TypeScript build, full root and Teams regression suites passed. No packaging.
+
+### 2026-11-03 — Cash-flow document heading distinction
+- Popup document headings now have a pale-blue gradient, slim blue left accent, stronger expanded tint, semibold label, muted clearing context and a 14px chevron area with right/down outline glyph. Hover and keyboard focus remain visible. Styles target only cash-flow document-group rows, leaving ordinary entries and totals unchanged.
+- Shared group renderer separates the decorative arrow into an aria-hidden span; outside the cash-flow popup the existing text arrow remains. Existing native button and aria-expanded behavior retained, with no grouping/calculation/state change.
+- Files: src/qna/ui.ts, style/visual.less, askbics-teams/test/cash-flow-compact.mjs. TypeScript build and non-image browser checks passed, including gradient, arrow direction, Enter expansion, unchanged totals and prior popup width/scroll/trace/export checks. Full suites recorded below. No package or screenshots; live Power BI verification pending user import.
+- Final verification: full root and Teams regression suites passed. No package created.
+
+### 2026-11-03 — Compact cash-flow summary and expandable explanations
+- Single scope disclosure now includes selected companies/currency/period and starting filters; removed repeated scope/company/posting lines from the result card. A compact starting-posting outcome summary replaces seven always-visible counters. Detailed counts and routine successful-run messages remain in collapsed Run details; Actual/Variance definitions remain in collapsed How amounts are calculated.
+- Successful routine status text is cleared only after preserving it in run details. Errors, incomplete runs and loading-limit warnings remain visible outside disclosures; attention counts include partial, unresolved, estimated, pending and unverified postings. No scope/value cleanup or financial/calculation changes.
+- Files: src/qna/cashFlowWorkspace.ts, cashFlowReport.ts, cashFlowResults.ts; style/visual.less; askbics-teams/test/cash-flow-compact.mjs. TypeScript build and root tests passed. Non-image browser checks passed for compact summary, disclosure defaults, help expansion, visible incomplete warning, and existing table/export/trace/popup behavior. No package or screenshots; native Power BI verification pending user import.
+- Final verification: full Teams regression suite passed; no package created.
+
+### 2026-11-03 — Summarize submenu hover dismissal
+- Shared Summarize by flyout now closes when the pointer leaves the trigger/flyout region or moves onto another parent menu item (including Cash flow). Pointer transfers into the flyout remain open. Focus transfers to other controls dismiss it; ArrowRight, Up/Down and Escape behavior retained. No query/selection logic changed.
+- Files: src/qna/transactionView.ts; new askbics-teams/test/summary-menu-hover.mjs. TypeScript build and focused non-image browser test passed for sibling hover dismissal, flyout entry/return, outside exit and keyboard navigation. Full suites recorded below. No package/screenshots; live Power BI verification pending user import.
+- Final verification: full root and Teams regression suites passed. No package created.
+
+### 2026-11-03 — Cash flow for selected answer cell
+- Answer-cell menu now passes its existing transaction drill scopes to Cash flow for this selection. With valid saved mappings, a bounded company/currency context lookup precedes automatic tracing; no Show cash flow click is required. Main Cash flow entry remains manual and retains saved general scope.
+- Selected source-question filters, exact model member tuples, inherited and summary filters constrain starting postings only. Signed Amount remains the configured measure, never the clicked KPI. Linked lookups retain company/currency/security without carrying starting category/period restrictions. Cell periods select starting cash activity, not inferred rent-to-payment matching; no historical cutoff is inferred from a non-date cell period.
+- Cell runs use transient companies/filters and do not persist them on success or setup save. Invalid mappings can open setup. Missing context, multi-scope calculations, analysis-state-only cells, ambiguous overlapping ranges and multiple currencies fail with visible guidance instead of broadening to all payments. Bank identification still requires configured codes or identifiable bank labels; absent identification retains the existing manual starting-posting fallback within the selected scope.
+- Files: new src/cashFlowSelection.ts; cashFlowQuery.ts; qna/ui.ts, transactionView.ts, cashFlowWorkspace.ts, cashFlowScope.ts; new scripts/test-cash-flow-selection.cjs registered in package.json; new Teams cash-flow-selected-cell.mjs and updated cash-flow-answer-menu.mjs.
+- Verified: TypeScript build, lint, root and Teams suites (final root rerun in progress), selected query regression (month/category/native measure/company intersection/link isolation/fail-closed cases), selected-cell browser (auto-run, saved-scope isolation, main manual entry, errors), actual answer/analysis menu integration. No package/screenshots/deployment; live Power BI integration pending user package/import.
+- Final root rerun passed, including registered selected-cell query coverage. No package created.
+
+### 2026-11-04 — Custom KPI synonyms in the KPI editor
+- Added a KPI synonyms multiline field (comma/newline separated) and saved alias summary to each custom KPI editor. Uses the existing shared synonyms/synonymEnabled settings, so question matching, autocomplete, serialization and Copy/Paste settings use the same source in both hosts; no new persistent schema.
+- KPI and general synonym editors share the draft. Aliases are deduplicated case-insensitively; collisions with other known field/measure/KPI names and aliases are rejected. Renaming moves synonyms; deleting removes them. Cancelled KPI edits do not apply alias changes. Contextual help explains suggestions, saving and formula naming.
+- Files: src/qna/customKpiSettings.ts, synonymSettings.ts, ui.ts; askbics-teams/test/kpi-synonyms.mjs.
+- Verified: TypeScript build, full root and Teams regression suites, focused non-image browser coverage of editing/reopening, deduplication, typing suggestions, question resolution, settings backup validation, rename and delete. Final build/browser rerun passed after alias summary/collision refinement. No package or screenshots created. Native Power BI verification remains pending user package/import.
+
+### 2026-11-04 — Automatic time windows, running totals and targeted performance
+- Shared on-demand query handler src/timeWindow.ts resolves undated YTD/TTM using the latest nonblank raw measure month within existing query/report filters. Numeric MonthIndex mapping is required; zero/one bases supported. Explicit month and across-year month queries retain their prior paths. Response text shows the resolved window and partial measure-data coverage. No new persistent settings.
+- Monthly running/cumulative total supports a calendar year (or latest available year), restarts in January and preserves category grouping. Each window uses the model for non-additive/native/custom KPI measures. Grouped automatic YTD/TTM totals are separately model evaluated. Cumulative rows are never added to a grand total. Result selections retain their window filters; cancelled/superseded queries cannot return results.
+- Performance: measures explicitly configured Additive across months reuse one complete monthly dataset for running totals, excluding custom KPIs and percentage-of-revenue calculations. Tests confirm a one-query grouped/scalar additive path versus discovery plus per-month evaluations. Complete-data/raw-value, duplicate-month and 30,000-row/200,000-cell safeguards prevent partial or ambiguous aggregation. No unqualified latency improvement claimed.
+- Added automatic-query typing suggestions and examples under Time setup. Shared Teams adapter generator imports the new handler; no generated source was manually edited.
+- Limits: calendar-year monthly running totals currently return a table; no fiscal-year configuration added. Automatic undated windows and running totals require on-demand model querying and mapped numeric MonthIndex. Top/Bottom and conflicting explicit MonthIndex filters require clarification; running-total comparisons/date ranges require a single year. Existing external filters continue to constrain windows; no model security/filter removal. Partial month coverage refers to measure data, not proof of missing transactions.
+- Files: src/timeWindow.ts, fieldParameterTrial.ts, qna/ui.ts, qna/settingsLayout.ts; askbics-teams/scripts/build-visual.mjs; scripts/test-time-window.cjs registered in package.json; askbics-teams/test/time-window.mjs.
+- Verification: TypeScript build, full root and Teams suites, lint, focused generated-adapter/browser regression. Tests cover latest nonblank month, filters, bases, literals, explicit periods, incomplete results, cancellation, custom ratios (70/300 rather than summed monthly ratios), grouped identities and one-query additive reuse. No package/screenshots/deployment; native Power BI selection/time verification remains pending user import.
+
+### 2026-11-04 — Consistent welcome actions
+- Cause: startup rendered before the catalogue was ready; updateEngine returned for automatic mode without refreshing the welcome cards. Clear rebuilt them with the populated catalogue.
+- All six actions now remain visible: Cash flow, Summarize, Visualize, Rank, Compare and Waterfall. Data-dependent actions show a waiting description and stay disabled until suitable fields/measures are available. Catalogue/engine updates refresh only existing card labels and availability; no draft clearing or answer resubmission. Clicks resolve current catalogue names. Unchanged labels skip DOM writes; no-card views skip catalogue lookup.
+- Files: src/qna/ui.ts; scripts/test.cjs fixture adjustment; askbics-teams/test/welcome-catalogue.mjs.
+- Non-image browser checks passed for initial six-card state, catalogue arrival, Clear/Refresh, draft preservation and time suggestions. Root/Teams regressions and lint passed. No package created; live Power BI verification pending user import.
+
+### 2026-11-04 — Apply each settings section without closing
+- Each settings tab now has Apply section and an inline status. Successful validation displays Applied · not saved yet; subsequent control edits mark the section Changes not applied. Section apply never persists host settings or closes the dialog. Final action renamed Save all & close; it validates every tab, includes unapplied edits, selects the first invalid tab and retains the dialog on failure. Cancel/close discard the normal dialog drafts.
+- Reuses existing editor draft validation. Transactions, Summary cards, Clearing details, Document details and Explain have independent analysis-editor checks. Power BI data/time/technical tabs use a new non-persisting validation hook; final host save is unchanged. Existing explicit backup-import/restore actions retain their separate workflow; Apply section does not execute those actions. No new persistent schema or backup format.
+- Added contextual help, accessible live status and lightweight layout. Section controls/listeners are removed on disposal so reused host panels do not accumulate buttons. Page text/help clicks do not falsely mark drafts dirty.
+- Files: src/qna/settingsSectionApply.ts (new), settingsLayout.ts, analysisSettings.ts, ui.ts; src/fieldParameterTrial.ts, visual.ts; style/visual.less. Existing browser selectors updated for Save all & close; new askbics-teams/test/settings-section-apply.mjs.
+- Verified: TypeScript build, root and Teams regressions, lint; non-image section-apply browser checks (stays open, no persistence, dirty status, Cancel discard, global save without applying, invalid-value blocking), and existing cash-flow settings browser checks (validation/save/cancel/persistence/help). No package or screenshots created. Native Power BI verification pending user import.
+
+### 2026-11-04 — Preserve value-suggestion field identity
+- Ordinary typing suggestions displayed a field beside a value but only inserted the bare value. They now carry valueField and canonical value metadata, matching the existing @ value-suggestion convention. Accepting a value inserts Field (value), so Company Code 2396 cannot be reassigned to an identically named vendor value.
+- Value acceptance runs before the generic replaceEnd path and preserves the suffix/caret when inserting mid-question. Existing parenthesized filter grouping semantics are unchanged. Measures, fields, visuals and time suggestions retain their own insertion paths.
+- Files: src/qna/ui.ts; new askbics-teams/test/value-suggestion-identity.mjs. Verified TypeScript build, full root/Teams suites, lint and non-image browser/parser regression for company/vendor duplicate 2396, October 2026 period, Vendor Name grouping, mid-question as a table suffix and @ suggestions.
+- The screenshot also showed an unparsed as token; that alone does not establish its origin. This fix covers the reproduced lost field association and suffix handling, without claiming every incomplete visual phrase is valid. No package/screenshots; native Power BI verification pending user import.
+
+### 2026-11-04 — Conversational fillers and general numeric-value suggestions
+- Residual grammar now tolerates what is/what are/what's, I want to know/I would like to know/I need, of and as after model entities, values, periods and visual instructions are recognized. This is a bounded vocabulary expansion, not deletion of all non-highlighted text; negation, unknown terms, comparisons and unsupported instructions remain guarded.
+- Confirmed the prior valueField suggestion fix is generic: clicking a known GL 2575 value inserts GL (2575), and Company Code 2396 retains its own field even with an identical vendor value. No Company Code hardcoding or new catalogue scan. Suggestions require the field/value to be available from the host catalogue; unselected bare four-digit values can still need clarification because of year/field ambiguity.
+- Files: src/parameterQuery.ts; scripts/test-parameter.cjs; askbics-teams/test/value-suggestion-identity.mjs. Root/Teams suites, lint and browser/parser regression passed, including October 2026 GL selection, alternate English wording, preserved business names, meaningful-word rejection and mid-question suffix preservation.
+- No package or screenshots; live Power BI verification pending user import.
+
+### 2026-11-04 — Simplified aging editor
+- Removed Age based on and Aging display controls. New setups retain valid Due date/detailed storage defaults; existing basis/display values are preserved when edited. Age calculation continues to use the mapped date field; result text now names that field rather than a potentially misleading hidden basis label.
+- Moved Model as-of date field and historical-date guidance into collapsed Advanced options. Retained historical validation, saved mappings, mandatory grouping and bucket settings. Help explains due/posting date meaning and summary questions.
+- Files: src/qna/agingSettings.ts, src/aging.ts; askbics-teams/test/aging-simple.mjs. Build, root and Teams suites passed. Focused non-image browser check verified removed controls, collapsed advanced mapping and preserved posting-date/summary/snapshot settings. No package created; live Power BI verification pending user import.
+
+### 2026-11-04 — Aging fixture in current sample workbook
+- Updated outputs/cash-flow-expanded-20261101/askBICS_Retail_CashFlow_Test_Data.xlsx with Aging data, Aging tests and Aging setup sheets. Separate Aging Sample import avoids adding blank signed-amount rows to the cash-flow ledger. Existing sheets and combined retail CSV remain unchanged.
+- 18 synthetic invoice balances at 2026-11-04, two customers, QAR; all default bucket boundaries, credit -50, missing due date 150 and zero balance. Total 10,850 (Alpha 10,500; Beta 350). Snapshot date mapping enables repeatable explicit as-of questions; no data exists for other snapshot dates.
+- Added update-aging.mjs, aging-validation.json and Aging_Test_Steps.txt (measure and field-parameter append instructions). Builder refuses to rerun over existing aging sheets; original cash build regenerates its original scope only.
+- Verified artifact-tool inspection/error scan and exported workbook readback with independent Python bucket/date/type checks. Existing verify.py passed: original cells preserved, 2,304 CSV rows, 144 cash postings and 71 balanced documents. No code change/package; no screenshots per user preference. Native Power BI test pending user import and configuration.
+
+### 2026-11-04 — Show Apply only for edited sections
+- Section Apply footer starts hidden; edits/add/remove actions reveal the filled blue button. Successful Apply hides the button and retains Applied · not saved yet; further edits reveal it again. Validation failures remain visible. Picker opening/search does not mark a section dirty.
+- Removed the question-mark marker from Apply per user request; its tooltip retains the draft/save explanation. Global save and Cancel semantics unchanged.
+- TypeScript build, root regressions and focused browser checks passed for initial visibility, edit/apply/re-edit, styling, no icon, validation, Cancel and global save. No package created; live Power BI verification pending import.
+
+### 2026-11-04 — Saved aging autocomplete
+- Saved aging setup names now participate in normal typing suggestions in both query modes, labeled Aging setup. Acceptance adds the required aging keyword, avoids duplicating an existing aging suffix, and retains normal prefix/suffix insertion behavior. Uses saved settings, not unsaved editor drafts; deletion removes the suggestion.
+- Files: src/qna/ui.ts; askbics-teams/test/aging-suggestions.mjs. TypeScript build, root/Teams regressions and focused browser acceptance checks passed. No package created; native Power BI activation pending user import.
+
+### 2026-11-04 — Reported what/thee conversational wording
+- Residual parser accepts standalone what and the common article typo thee only after measure/field/value recognition. Exact screenshot questions now produce the same measure, grouping and June 2024 filters as the canonical show question. Explicit quoted what/thee filter values remain intact; excluding and other meaningful unsupported instructions remain rejected.
+- Files: src/parameterQuery.ts; scripts/test-parameter.cjs. TypeScript build and root/Teams regressions passed. This does not fix the separate 60-second Power BI filter-reset/data-loading issue. Only project files changed; no package created.
+
+### 2026-11-04 — Aging performance and accepted suggestion records
+- Aging requests mark their query plans. For unchanged parameter selectors, reset removes only prior model predicates using FilterAction.remove with the predicate list; field/measure selectors remain selected. Clear acknowledgement ignores retained selector targets, still rejects stale model predicates, and waits before submitting replacement filters. Changed projection retains the existing full reset. Native Power BI partial-removal behavior/performance remains pending verification; no claim of live timeout resolution.
+- Aging Advanced adds explicit Use additive aging optimization (default off). Only opted-in non-custom/non-ratio measures use one complete customer/due-date query. Raw ISO dates/numbers, completeness, row-limit and duplicate checks gate aggregation; buckets, missing dates, grand totals and drill scopes preserved. Monthly additive settings are deliberately not reused as proof of customer/date additivity. Raw grouping values exposed for aging and separated in query-cache keys. Settings backup validation and merge/replace preserve the new optional flag.
+- AcceptedSuggestions retains transient kind/name/field and span metadata after accepting suggestions. Submit resolves canonical text from these records; the existing planner remains the execution validator. Value choices stay explicit Field (value); canonical field/measure suggestions use catalogue names. Prefix/suffix edits shift spans; overlapping edits revoke identity. This is not an AI/NLP fallback or a new backend structured-intent API. Composer records are not settings/exported state.
+- Files: src/aging.ts, agingAdditive.ts, fieldParameterTrial.ts, parameterQuery.ts, qna/agingSettings.ts, qna/acceptedSuggestions.ts, qna/ui.ts; tests for aging, parameter reset, backup, accepted records and browser value identity. Build, root/Teams suites and browser value/aging editor checks passed. No package/screenshots created. Enable additive optimization for the supplied SUM outstanding fixture, map Snapshot date, and test after user package/import.
+
+### 2026-11-04 — Offline catalogue typo fallback
+- User explicitly requires no AI connection. Existing parameter parser runs first; only unsafe-interpretation failures retry bounded field/measure/alias spelling corrections against the configured catalogue. Successful corrections are disclosed in plan summaries. Equal best matches request clarification. No backend, network dependency or persistent setting added.
+- New src/catalogueTypos.ts handles one-character omissions/substitutions/transpositions per word with bounded names/questions/replacements. Numeric identifiers, known values, quoted/bracketed/parenthesized text, explicit comparison literals and semantic operators are protected. Unsupported instructions still fail. This is conservative catalogue matching, not unrestricted natural-language understanding; local GlobalQnaEngine grammar remains unchanged.
+- Shared suggestion matching offers typo matches for Field/Measure only when exact/substring matches are absent; clicked suggestions retain the existing accepted-identity behavior. Tests cover canonical plan equivalence, two misspelled entities, ambiguous matches, protected values/codes/operators and suggestion fallback.
+- Files: src/catalogueTypos.ts, src/parameterQuery.ts, src/qna/suggestionMatching.ts, scripts/test-catalogue-typos.cjs, scripts/test-parameter.cjs, package.json. Build, lint, root/Teams suites passed; final explicit-literal guard passed recompilation and focused regression. No package created. Native Power BI activation/verification pending user packaging/import.
+
+### 2026-11-04 — Aging without default grouping; simplified editor
+- Removed Default grouping field and the entire Advanced options section at user request. Editor now exposes name, date, measure and buckets. Existing stored group, snapshot mapping, additive opt-in and hidden basis/display remain preserved by edits and backups; new setups have no snapshot mapping or additive opt-in. Legacy group values no longer drive implicit grouping.
+- Questions without by return one All balances row across buckets. Explicit by <field> retains grouped results and validates the requested field. Model-evaluated scalar totals preserve nonadditive measures; opted-in additive setups support date-only one-query aggregation. Update aging omits by when ungrouped. Bucket drill scopes, snapshot/Always filters and historical missing-mapping safeguards remain.
+- Removing the snapshot editor does not create historical balance support: new setups without a saved snapshot mapping reject historical dates. No automatic inference of snapshots or additive measure semantics.
+- Files: src/aging.ts, src/agingAdditive.ts, src/qna/agingSettings.ts, src/qna/ui.ts; aging, backup and browser editor regressions. Root build/tests/lint passed; Teams suite and focused browser editor check passed, including absence of both removed controls and retention of saved snapshot/additive settings. No package or screenshots created; native Power BI verification pending user packaging/import.
+
+### 2026-11-04 — Follow-up aging timeout in mixed catalogue
+- User still observed 60-second timeout and repeated queries; screenshot alone does not prove exact host timing. Found that ungrouped scalar adapter selected config.options[0], potentially an unrelated retail field. Aging plans now carry agingDateField; scalar adapter requires and selects that field, retains model total semantics, and rejects missing parameter mapping. Fixed-member shortcut applies only when that member is the actual anchor.
+- The previous removal of Advanced also hid the additive opt-in, leaving new setups on ten model band requests. Added only a compact Balances can be added checkbox under the amount measure (Advanced/snapshot/default-group controls remain absent). Explicit SUM-compatible opt-in uses existing one-complete-query daily aggregation; default remains false to protect ratios/averages/distinct counts. Existing opt-in serialization/backup validation retained.
+- Aging no-response recovery now waits 15 seconds before its single reset retry, rather than interrupting a potentially healthy query at four seconds. Overall 60-second request limit unchanged. Initial host updates/reset queries may still occur; one aging data load is not a promise of one Performance Analyzer entry.
+- Files: src/aging.ts, parameterQuery.ts, fieldParameterTrial.ts, qna/agingSettings.ts; parameter, aging and browser regressions. Native Power BI performance remains unverified; user must import their updated package and enable the opt-in for the sample SUM measure. No package created.
+- Verification: TypeScript build, root/Teams regression suites, lint and focused browser checkbox/save compatibility check passed.
+
+### 2026-11-04 — Aging result calendar/action styling
+- Aging toolbar has visible As-of date and Display labels, consistent 38px rounded input/picker/button, light background, blue Update aging action and visible keyboard focus. Flex wrapping supports narrow visuals. Native calendar retained; two-option display picker omits unnecessary search. Query text/group/date behavior unchanged.
+- Files: src/qna/ui.ts, style/visual.less, askbics-teams/test/aging-toolbar.mjs. Build and root/Teams suites passed; browser test compiled LESS, checked 800/400/280px widths without horizontal page overflow, equal heights and date-update query. No screenshots/package; native Power BI verification pending import.
+
+### 2026-11-04 — Compact inline aging actions
+- Replaced the separate aging header with inline Results toolbar controls alongside copy/PDF: calendar icon with selected-date tooltip, compact Detailed/Summary picker without search, and update icon with Update aging tooltip/accessibility label. Native date popup replaced with themed month/day picker, previous/next navigation, selected-day highlight and Today. Outside click and Escape dismiss it; updates preserve grouping/date/display query semantics.
+- Shared module src/qna/agingControls.ts; src/qna/ui.ts, style/visual.less and askbics-teams/test/aging-toolbar.mjs updated. Browser check passed at 800/400/280px, calendar selection, summary selection, grouped update query and Escape. No screenshots/package; native Power BI verification pending import.
+- Final validation: TypeScript build and root/Teams regression suites passed; browser interaction checks passed.
+
+### 2026-11-04 — Aging actions match export toolbar
+- Removed form-style borders/background from calendar and display triggers, matched export action font/color/hover treatment and 26px compact controls. Refined calendar grid and single circular-refresh SVG icons to 15px. Popup/date/update behavior unchanged.
+- Fixed specificity against the host theme, and updated browser harness to use askbics-host and assert transparent background/border and matching Copy for Excel text color. Build and focused browser appearance/interactions passed at 800/400/280px. No screenshots or package; only project files changed.
+
+### 2026-11-04 — Smaller aging calendar
+- Reduced popup target width from 272px to 224px, tightened padding and grid spacing, reduced date cells to 24px and navigation icons to 26px. Date selection, labels and update behavior unchanged.
+- Build and existing browser interaction/responsive checks passed. No package/screenshots created; only project files changed.
+
+Clear and welcome-screen Refresh share the Power BI startup/default-field reload path. A confirmed parameter defaults to Assigned Group when startup grouping is unconfigured. Live Power BI verification remains pending.
+
+Refresh re-applies the field selector instead of racing a broad host refresh. Scoped refresh resets retain selectors while removing old predicates. Refresh detection no longer clears the parameter to enumerate fields. Validate the resulting DAX in Performance Analyzer after importing the updated visual.
+
+The Format visual pane now accepts a single-item TREATAS fragment under askBICS query defaults. It maps to a dedicated hidden calculation-item self-filter independent of question filters. First-load timing and native calculation item evaluation require verification in Desktop.
+
+Calculation item TREATAS now uses an Edit-mode-only textarea in Q&A settings > Advanced > Advanced setup. Existing defaultCalculation.expression and its native self-filter are reused.
+
+### 2026-11-09 — Lease expiry parameter switch
+The supplied 2.9.111.0 trace shows three fields, seven measures, zero rows and empty filter acknowledgements. Switching from Total Area to Earliest Lease Expiry with Unit triggered a full filter clear. requestBase now compares model predicates separately from both incoming parameter selectors. The regression in scripts/test-parameter.cjs verifies a direct apply for this switch. Build and root tests passed. First host query and live Power BI timeout remain unverified.
+
+
+### 2026-11-09 — Retry after unacknowledged suggestion request
+A matching submitted filter can belong to a cancelled suggestion lookup. sendPending now refreshes only a confirmed current view with matching filter signatures, otherwise it merges the requested selectors. Trace action now reflects the actual host call. Root regressions passed. Live host filter acknowledgement and initial report query remain unverified.
+
+
+### 2026-11-09 — Automatic field and measure self-filter
+Requests with no acknowledged legacy filter now write the parameter pair to general.selfFilter, enabled as a self-filter in capabilities.json. The controller reads that property on host updates and also supports the previous parameterTrial.filter property for existing reports. The adapter regression verifies both MallUnits 2 / Unit and Map Measures. / Earliest Lease Expiry are sent in one call without slicer input. Live Power BI parameter expansion requires import and Performance Analyzer verification. No package created.
+
+
+2026-11-09 — 2.9.112.0 on-demand query recovery. A broad data update without filter acknowledgement used to suppress the single retry. The controller now resends the pending filters once without clearing selectors and logs the field/measure selector values. The regression simulates an unacknowledged broad response and completes only after matching data arrives. Root build, root tests, lint and Teams tests passed. Source only; the MallUnits report still needs a live host trace with this build.
+
+2.9.113.0: The MallUnits native slicer capture returned 172 rows using the generated Fields columns and qualified DAX member references. The visual translates resolved field and measure selectors at the host boundary and normalizes incoming echoes. Slicer-free live verification pending.
+
+2.9.114.0: Saved MallUnits PBIX confirms physical selector predicates were persisted on page 2; native slicers on test page also persist label-to-key identity metadata. Resolved selectors now use BasicFilterWithKeys. Root regressions, lint and Teams tests passed. Desktop execution without slicers remains unverified.
+
+2.9.115.0 restores the live-verified 9.8 on-demand selector path: ordinary label BasicFilters merged together on parameterTrial.filter. The Optimization self-filter remains separate. Newer cancellation and bounded retry handling are retained. A regression submits the MallUnits selectors, accepts a synthetic 172-row narrow result with no filter echo, and verifies one-time cleanup of an observed obsolete general.selfFilter. Build, root tests, lint and Teams tests passed. No package created or live 2.9.115.0 run performed.
+
+2.9.115.0 live MallUnits trace sent labels but received three fields, seven measures and zero rows. 2.9.116.0 declares only parameterTrial.filter as a self-filter and sends the saved Optimization filter in the same merge as field/measure selectors. Tests verify the combined payload, scoped removal, and the single declaration. Root build, tests, lint and Teams tests passed. Live Desktop behavior pending.

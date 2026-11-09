@@ -19,3 +19,5 @@ assert.match(queries.at(-1),/TREATAS\(\{"001"\}/);assert.doesNotMatch(queries.at
 const limitedQueries=[];const limited=new ModelSession(model,'fixture-token',async(url,init)=>{limitedQueries.push(JSON.parse(init.body).queries[0].query);return new Response(JSON.stringify({results:[{tables:[{rows:Array.from({length:5001},(_,i)=>Object.fromEntries(data[0].map((v,j)=>[j===10?'[M0]':('[G'+j+']'),j===2?String(i):v])))}]}]}));});
 const capped=await limited.answer(question,{});assert.equal(capped.table.rows.length,5000);assert.equal(capped.table.modelResultComplete,false);assert.match(limitedQueries[0],/TOPN\(5001,/);
 console.log('Teams scoped cash flow: bounded TOPN, starting predicates, independent link predicates and incomplete metadata passed.');
+
+await session.answer(';cashflow:'+encodeURIComponent(JSON.stringify({...setup,partitions:[{field:'document',values:['999'],exclude:true}]})),{});assert.match(queries.at(-1),/NOT .* IN/);assert.match(queries.at(-1),/999/);

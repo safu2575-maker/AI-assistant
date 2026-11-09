@@ -1,3 +1,4 @@
+import { typoSuggestionMatches } from '../catalogueTypos';
 export interface SuggestionCandidate { label:string; detail:string; originalName?:string }
 /** Preserve first occurrence and stable exact-match ordering without quadratic scans. */
 export function matchSuggestionCandidates<T extends SuggestionCandidate>(items:T[],query:string,limit:number):T[] {
@@ -11,5 +12,7 @@ export function matchSuggestionCandidates<T extends SuggestionCandidate>(items:T
   if(seen.has(key))continue;seen.add(key);
   (normalized===q?exact:partial).push(item);
  }
- return [...exact,...partial].slice(0,limit);
+ const matches=[...exact,...partial];
+ if(!matches.length)matches.push(...items.filter(item=>(item.detail==='Field'||item.detail==='Measure')&&typoSuggestionMatches(item.label,query)));
+ return matches.slice(0,limit);
 }

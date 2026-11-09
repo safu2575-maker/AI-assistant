@@ -1,0 +1,31 @@
+import {build} from 'esbuild';
+import {chromium} from 'playwright-core';
+import {readFile} from 'node:fs/promises';
+import less from 'less';
+import assert from 'node:assert/strict';
+const bundle=await build({stdin:{contents:`
+import {cashFlowWorkspace} from './src/qna/cashFlowWorkspace';
+import {appendCashFlowMenu} from './src/qna/transactionView';
+import {GlobalQnaUi} from './src/qna/ui';import {GlobalQnaEngine} from './src/qna/engine';
+const root=document.getElementById('root');const ui=new GlobalQnaUi(document.createElement('div'),new GlobalQnaEngine({rowCount:0,fields:[],measures:[],selectedIndices:[],formatValue:(_,v)=>String(v)}));
+const setup={fields:{company:'Company',document:'Document',clearing:'Clearing',accountDescription:'Account description'},measure:'Signed Amount',rules:[],scope:{companies:['9760'],filters:[{field:'Category',values:['Old']}]}};
+window.saved=0;window.requests=[];window.original=JSON.stringify(setup);
+const scopes=[{question:'Show Rent by Category',requireSelection:true,selections:[[{table:'Journal',column:'Category',value:'Electronics'}]]}];
+const load=async q=>{const req=JSON.parse(decodeURIComponent(q.slice(10)));window.requests.push(req);if(window.fail)throw new Error('Missing selected model context');if(req.selectionContext)return {text:'',table:{columns:['Company','Signed Amount'],rows:[['9720','-100']],modelGroupValues:[['9720',null]],modelResultComplete:true}};const rows=[['9720','1','','Bank',-100],['9720','1','201','Vendor',100],['9720','2','201','Vendor',-100],['9720','2','','Expense',100]];return {text:'',table:{columns:['Company','Document','Clearing','Account description','Signed Amount'],rows:rows.map(r=>r.map(String)),modelGroupValues:rows.map(r=>r.slice(0,-1)),modelRawRows:rows.map(r=>[null,null,null,null,r[4]]),rowIndices:rows.map(()=>[]),modelResultComplete:true}};};
+window.openSelected=()=>cashFlowWorkspace(root,setup,['Company','Document','Clearing','Account description','Category'],['Signed Amount'],load,()=>window.saved++,()=>{},t=>ui.table(t,'Cash flow'),true,scopes);
+window.openMain=()=>cashFlowWorkspace(root,setup,['Company','Document','Clearing','Account description','Category'],['Signed Amount'],load,()=>window.saved++,()=>{},t=>ui.table(t,'Cash flow'));
+window.checkSaved=()=>JSON.stringify(setup)===window.original;
+const menu=document.createElement('div');root.append(menu);appendCashFlowMenu(menu,root,scopes);root.addEventListener('askbics-open-cash-flow',e=>{window.dispatched=e.detail.scopes;window.openSelected();});
+`,resolveDir:'..',loader:'ts'},bundle:true,write:false,platform:'browser'});
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+try{const page=await browser.newPage({viewport:{width:900,height:800}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setContent('<div id="root" class="askbics-host" style="height:780px;position:relative"></div>');await page.addStyleTag({content:(await less.render(await readFile('../style/visual.less','utf8'),{paths:['../style']})).css});await page.addScriptTag({content:bundle.outputFiles[0].text});
+await page.getByRole('menuitem',{name:'Cash flow for this selection'}).click();await page.waitForSelector('.askbics-cash-result-table');
+assert.equal(await page.getByRole('dialog',{name:'Cash-flow setup',exact:true}).count(),0);
+const state=await page.evaluate(()=>({requests:window.requests,saved:window.saved,unchanged:window.checkSaved(),dispatched:window.dispatched}));
+assert.equal(state.saved,0);assert.ok(state.unchanged);assert.ok(state.dispatched[0].requireSelection);
+const start=state.requests.find(r=>r.phase==='starts');assert.equal(start.company,'9720');assert.equal(start.measure,'Signed Amount');assert.deepEqual(start.filters,[]);assert.equal(start.selectionScopes[0].selections[0][0].value,'Electronics');
+assert.ok(state.requests.filter(r=>r.phase==='links').every(r=>!r.selectionScopes));
+await page.getByRole('button',{name:'Back',exact:true}).click();await page.evaluate(()=>{window.requests=[];window.openMain();});assert.equal(await page.evaluate(()=>window.requests.length),0,'Main entry must not auto-run');
+await page.getByRole('button',{name:'Back',exact:true}).click();await page.evaluate(()=>{window.fail=true;window.requests=[];window.openSelected();});await page.getByText(/Cash flow for this selection: Missing selected model context/).waitFor();assert.equal(await page.getByRole('button',{name:'Show cash flow',exact:true}).isDisabled(),true);assert.equal(await page.locator('.askbics-cash-result-table').count(),0);assert.deepEqual(errors,[]);
+console.log('Selected cell auto-run, menu context, saved scope isolation, main entry and fail-closed errors passed.');
+}finally{await browser.close();}

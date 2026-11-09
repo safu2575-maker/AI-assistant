@@ -1,3 +1,4 @@
+import {sameCashPostingAmount} from './cashFlowAmount';
 import {CashPosting,CashSetup,cashKey,CashContinuation} from './cashFlow';
 import {cashQuestion} from './cashFlowQuery';
 /** Load a bounded relationship graph, never the whole company ledger. */
@@ -23,7 +24,7 @@ export async function loadCashLinks(setup:CashSetup,company:string,currency:stri
     progress(`Loading linked documents · batch ${calls} · ${rows.size.toLocaleString()} postings`);
     const response=await load(cashQuestion(setup,company,{phase:'links',currency,link:{field,values:batch}}));
     if(!active())throw new Error('Cash-flow request cancelled.');complete=complete&&response.complete;
-    for(const p of response.rows){if(p.company!==company||p.currency!==currency)continue;const key=cashKey(p);const prior=rows.get(key);if(prior&&prior.amount!==p.amount)throw new Error('Posting amounts changed between queries. Refresh the data and map a unique line item. Conflict: '+JSON.stringify({company:p.company,year:p.year,document:p.document,item:p.item,previousAmount:prior.amount,returnedAmount:p.amount,lookupField:field,lookupValues:batch}));if(!prior){rows.set(key,p);next.push(p);}if(rows.size>=(continuation?100000:20000))return {rows:[...rows.values()],complete:false,reason:continuation?'Loaded-posting safety limit reached (100000 postings). Narrow the scope.':undefined};}
+    for(const p of response.rows){if(p.company!==company||p.currency!==currency)continue;const key=cashKey(p);const prior=rows.get(key);if(prior&&!sameCashPostingAmount(prior.amount,p.amount))throw new Error('Posting amounts changed between queries. Refresh the data and map a unique line item. Conflict: '+JSON.stringify({company:p.company,year:p.year,document:p.document,item:p.item,previousAmount:prior.amount,returnedAmount:p.amount,lookupField:field,lookupValues:batch}));if(!prior){rows.set(key,p);next.push(p);}if(rows.size>=(continuation?100000:20000))return {rows:[...rows.values()],complete:false,reason:continuation?'Loaded-posting safety limit reached (100000 postings). Narrow the scope.':undefined};}
    }
   }
   if(!next.length)return {rows:[...rows.values()],complete};

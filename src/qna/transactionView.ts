@@ -15,6 +15,14 @@ import { loadingOverlay } from "./loadingOverlay";
 // discard its sorting, scroll position, filters or transaction-rule selection.
 const investigationViews = new WeakMap<HTMLElement, {parent?:HTMLElement; label:string; close:()=>void; cancel:()=>void}>();
 
+/** Cash flow has its own signed measure and starting scope; never reuse a rent/KPI cell as cash. */
+export function appendCashFlowMenu(menu:HTMLElement,root:HTMLElement,scopes?:TransactionScope[]):void {
+    const action=document.createElement('button');action.type='button';action.setAttribute('role','menuitem');action.textContent=scopes?'Cash flow for this selection':'Cash flow';
+    action.title=scopes?'Trace starting bank postings within this cell context using the saved signed amount.':'Open cash flow with saved company and starting filters. Review the scope before running.';
+    action.dataset.settingsHelp=action.title;
+    action.onclick=()=>{menu.remove();root.dispatchEvent(new CustomEvent('askbics-open-cash-flow',{detail:{scopes}}));};menu.append(action);
+}
+
 /** Shared flyout for every answer menu; opening it never sends a query. */
 export function appendSummarizeMenu(menu: HTMLElement, fields: string[], choose: (field: string) => void): void {
     const trigger = document.createElement('button'); trigger.type = 'button';
@@ -35,6 +43,15 @@ export function appendSummarizeMenu(menu: HTMLElement, fields: string[], choose:
         flyout.style.left=Math.max(8, bounds.right + flyout.offsetWidth + 8 > window.innerWidth ? bounds.left - flyout.offsetWidth : bounds.right) + 'px';
         flyout.style.top=Math.max(8, Math.min(bounds.top,window.innerHeight-flyout.offsetHeight-8)) + 'px';
     };
+    const close=()=>{flyout.hidden=true;trigger.setAttribute('aria-expanded','false');};
+    const inside=(target:EventTarget|null)=>target instanceof Node&&(trigger.contains(target)||flyout.contains(target));
+    // The trigger and fixed-position flyout form one hover/focus region.
+    trigger.onmouseleave=event=>{if(!inside(event.relatedTarget))close();};
+    flyout.onmouseleave=event=>{if(!inside(event.relatedTarget))close();};
+    menu.addEventListener('mouseover',event=>{if(!inside(event.target))close();});
+    menu.addEventListener('focusin',event=>{if(!inside(event.target))close();});
+    trigger.addEventListener('focusout',event=>{if(!inside(event.relatedTarget))close();});
+    flyout.addEventListener('focusout',event=>{if(!inside(event.relatedTarget))close();});
     trigger.onmouseenter=open; trigger.onclick=()=>{open();flyout.querySelector('button')?.focus();};
     trigger.onkeydown=event=>{if(event.key==='ArrowRight'){event.preventDefault();open();flyout.querySelector('button')?.focus();}};
     flyout.onkeydown=event=>{
@@ -63,6 +80,7 @@ export function bindTransactions(root:HTMLElement, holder:HTMLElement, table:Qna
         const button=document.createElement('button');button.type='button';button.setAttribute('role','menuitem');button.textContent=configured?'Show transactions':'Configure transaction fields in settings';button.disabled=!configured;
         button.onclick=()=>{menu.remove();void openTransactions(root,analysisQuestion({...selected,transactions:period}),cell,load,renderTable);};menu.append(button);
         appendSummarizeMenu(menu,typeof fields==='function'?fields():fields,field=>{menu.remove();void openTransactions(root,analysisQuestion({...selected,transactions:period,summarizeBy:field}),cell,load,renderTable,`Summarize by ${field}`);});root.append(menu);
+        appendCashFlowMenu(menu,root,[{question:analysisQuestion({...selected,transactions:period})}]);
         menu.style.left=`${Math.max(8,Math.min(event.clientX,window.innerWidth-menu.offsetWidth-8))}px`;
         menu.style.top=`${Math.max(8,Math.min(event.clientY,window.innerHeight-menu.offsetHeight-8))}px`;
         menu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();menu.remove();cell.focus();}});

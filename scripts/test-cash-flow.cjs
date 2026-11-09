@@ -14,6 +14,10 @@ const cleared=(clearing)=>({clearing,clearingYear:'2026',clearingDate:'2026-10-0
 const sample=[p('001','1','120',-100),p('001','2','121',100,cleared('201')),p('002','1','121',-100,cleared('201')),p('002','2','122',100,cleared('202')),p('003','1','122',-100,cleared('202')),p('003','2','130',100)];
 const scope={company:'9720',currency:'SAR',from:'2026-10-01',to:'2026-10-31',complete:true};
 const check=(rows,expected,options={})=>{const r=traceCash(rows,rules,{...scope,...options});assert.equal(r.payments,expected);assert.ok(Math.abs(r.allocations.reduce((n,a)=>n+a.amount,0)-(r.receipts-r.payments))<1e-7,'cash reconciliation');return r;};
+for(const [change,reason] of [[{item:''},'Line item is missing'],[{document:''},'Document number is missing'],[{date:'2026-02-30'},'Posting date is invalid'],[{amount:NaN},'Posting amount is not a finite number']]) {
+ assert.throws(()=>traceCash([{...sample[0],...change}],rules,scope),error=>error.message.includes(reason)&&error.message.includes('Company: "9720"')&&error.message.includes('Fiscal year: "2026"')&&error.message.includes('No posting was skipped'));
+}
+assert.throws(()=>traceCash([{...sample[0],item:'',document:''}],rules,scope),error=>error.message.includes('Document: (blank)')&&error.message.includes('Line item: (blank)')&&error.message.includes('Line item is missing')&&error.message.includes('Document number is missing'));
 let result=check(sample,100);assert.equal(result.unresolved,0);assert.equal(result.allocations[0].category,'Expense');assert.equal(result.allocations[0].path.length,6);
 assert.equal(result.allocations[0].amount,-100,'intermediate amounts are not added');
 const partial=[p('P1','1','120',-50),p('P1','2','121',50,{reference:'INV',referenceYear:'2025',referenceItem:'1'}),p('INV','1','121',-100,{year:'2025',date:'2025-12-01'}),p('INV','2','130',100,{year:'2025',date:'2025-12-01'})];
@@ -68,10 +72,11 @@ const start=sample[0],end={...sample.at(-1),accountDescription:'Expense descript
 const allocations=[{root:cashKey(start),amount:-30,category:'Expense',account:end.account,status:'Resolved',path:[start,end]},{root:cashKey(start),amount:-40,category:'Expense',account:end.account,status:'Resolved',path:[start,end]},{root:cashKey(start),amount:-20,category:'Equipment',account:'140',status:'Resolved',path:[start,{...end,account:'140'}]},{root:cashKey(start),amount:-10,category:'Unresolved',account:'140',status:'Allocation unclear',path:[start,{...end,account:'140'}]}];
 const display={...setup,displayColumns:['document','Amount']};
 const view=cashFlowTable(allocations,display);
-assert.deepEqual(view.columns.slice(-4),['Destination account','Destination description','Destination amount','Details']);assert.equal(view.rows[0][2],end.account);assert.equal(view.rows[0][3],'Expense description');assert.equal(view.rows[2][3],'—');assert.equal(view.rows.length,3);assert.equal(view.entries[0].length,2);
-assert.deepEqual(view.total([0,1,2]),['Grand Total','-100.00','','','-100.00','']);
-assert.deepEqual(view.total([0]),['Grand Total','-100.00','','','-70.00','']);
-assert.deepEqual(view.total([]),['Grand Total','0.00','','','0.00','']);
+assert.deepEqual(view.columns.slice(-6),['Destination account','Destination description','Destination amount','Allocation status','Variance','Details']);assert.equal(view.rows[0][2],end.account);assert.equal(view.rows[0][3],'Expense description');assert.equal(view.rows[2][3],'—');assert.equal(view.rows.length,3);assert.equal(view.entries[0].length,2);
+assert.deepEqual(view.total([0,1,2]),['Grand Total','-100.00','','','-100.00','','0.00','']);
+assert.deepEqual(view.total([0]),['Grand Total','-100.00','','','-70.00','','-30.00','']);
+assert.deepEqual(view.total([]),['Grand Total','0.00','','','0.00','','0.00','']);
+assert.deepEqual(view.rows.map(row=>row.at(-2)),['-30.00','-80.00','-90.00']);
 const other={...start,document:'other',amount:-50};
 assert.equal(cashFlowTable([...allocations,{...allocations[0],root:cashKey(other),path:[other,end],amount:-50}],display).rows.length,4);
 assert.throws(()=>validateCashSetup({...setup,displayColumns:Array(11).fill('document')},columns,['Amount']),/1–10/);
@@ -83,4 +88,17 @@ assert.throws(()=>cashPostings(table,extra),/selected starting-posting/);
 assert.equal(cashPostings(table,setup)[0].sourceValues.document,table.rows[0][table.columns.indexOf('document')]);
 console.log('Cash-flow table: source columns, hidden trace fields, split grouping, unique roots, filtered totals and bounds passed.');
 console.log('Cash flow: multi-level clearing, partial payments, cross-year references, split destinations, allocation caps, missing data, cutoff, company isolation, transfers, signs and query mapping passed.');
+// Split postings show Actual once in any visible order; blank Actual counts as zero.
+assert.deepEqual(view.presentRows([0,1,2]).map(r=>[r[1],r.at(-2)]),[['-100.00','-30.00'],['','20.00'],['','10.00']]);
+assert.deepEqual(view.presentRows([1,0]).map(r=>[r[1],r.at(-2)]),[['-100.00','-80.00'],['','70.00']]);
+assert.equal(view.presentRows([2])[0][1],'-100.00');
+assert.equal(view.rows[1][1],'-100.00','presentation must not overwrite source values');
+
+const {cashAllocationLabel,cashStatusAppearance}=require('../.tmp/test/cashFlowStatus');
+for(const [status,tone,label] of [['Resolved','verified','Verified'],['Estimated','estimated','Estimated · Proportional'],['Allocation unclear','unresolved','Unresolved · Allocation unclear'],['Unverified identity','error','Unverified'],['Not processed','pending','Not processed']]){
+ assert.equal(cashAllocationLabel([{status}]),label);assert.equal(cashStatusAppearance(label).tone,tone);
+}
+assert.equal(cashAllocationLabel([{status:'Resolved',groupId:'group'}]),'Verified · Destination only');
+assert.equal(cashStatusAppearance('Partially verified').tone,'unresolved');
 })().catch(e=>{console.error(e);process.exitCode=1;});
+

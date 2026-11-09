@@ -45,5 +45,9 @@ export function synonymSettings(current:QnaLayoutSettings,fields:string[],measur
         if(type.value==='Field value'){const existing=values.find(r=>r.field===name&&r.value===original);if(existing)existing.aliases=[...draft];else values.push({field:name,value:original,aliases:[...draft]});}else synonyms[name]=[...draft];
         reset();render();status.textContent='Synonyms updated. Save settings to apply.';
     };
-    populate();render();return {element,read:()=>({synonyms,synonymEnabled:enabled,valueSynonyms:values}),validate:()=>{const clean=!editing&&!draft.length&&!input.value.trim()&&!value.value.trim();if(!clean)status.textContent='Add or update the pending synonyms, or cancel the edit, before saving settings.';return clean;}};
+    populate();render();return {element,
+        getAliases:(name:string)=>[...(synonyms[name]||[])],
+        setKpiAliases:(name:string,aliases:string[],previous?:string)=>{if(previous&&previous!==name){delete synonyms[previous];delete enabled[previous];}if(!measures.includes(name))measures.push(name);synonyms[name]=aliases;enabled[name]=true;populate();render();},
+        removeKpiAliases:(name:string)=>{delete synonyms[name];delete enabled[name];populate();render();},
+        read:()=>({synonyms,synonymEnabled:enabled,valueSynonyms:values}),validate:()=>{const clean=!editing&&!draft.length&&!input.value.trim()&&!value.value.trim();if(!clean)status.textContent='Add or update the pending synonyms, or cancel the edit, before saving settings.';return clean;}};
 }

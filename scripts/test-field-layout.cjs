@@ -35,3 +35,21 @@ assert.equal(localYears.table.columns.length,15,'13 years plus row label and tot
 const filtered=local.configuredAnswer('matrix',['Group'],['Vendor'],['Amount'],[{field:{name:'Vendor',key:'Vendor',values:[],uniqueValues:[]},indices:Array.from({length:12},(_,i)=>i)}]);
 assert.equal(filtered.table.columnLayoutNotice,undefined,'count distinct members after filters');
 console.log('Column readability: 12/13 boundary, no truncation, time exceptions, mixed layouts, filtered counts and preserved totals passed.');
+
+const {calculationFieldsAsColumns,calculationItemsAsRows}=require('../.tmp/test/calculationRows');
+const calendarMonths=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const unordered=['Apr','Aug','Dec','Feb','Jan','Jul','Jun','Mar','May','Nov','Oct','Sep'];
+const calendarRows=[['2027','Jan'],...unordered.map(m=>['2026',m]),['2025','December']];
+const calendarSource=calculationItemsAsRows({columns:['Year','Month','KPI'],rows:calendarRows.map(([y,m],i)=>[y,m,String(i)]),rowIndices:calendarRows.map((_,i)=>[i]),modelRawRows:calendarRows.map(([y,m],i)=>[Number(y),m,i]),calculationNotes:Object.fromEntries(calendarRows.map((_,i)=>[i+':2',['note '+i]]))},['KPI']);
+const calendarPivot=calculationFieldsAsColumns(calendarSource,['Year','Month']);
+assert.deepEqual(calendarPivot.columns,['Calculation','2025 / December',...calendarMonths.map(m=>'2026 / '+m),'2027 / Jan']);
+calendarPivot.columns.slice(1).forEach((heading,i)=>{
+ const original=calendarRows.findIndex(([y,m])=>heading===y+' / '+m);
+ assert.equal(calendarPivot.rows[0][i+1],String(original));
+ assert.equal(calendarPivot.modelRawRows[0][i+1],original);
+ assert.deepEqual(calendarPivot.cellIndices[0][i+1],[original]);
+ assert.deepEqual(calendarPivot.calculationNotes['0:'+(i+1)],['note '+original]);
+});
+const monthOnly=calculationItemsAsRows({columns:['Month','KPI'],rows:[['december','2'],['JANUARY','1'],['February','3']],rowIndices:[[],[],[]]},['KPI']);
+assert.deepEqual(calculationFieldsAsColumns(monthOnly,['Month']).columns,['Calculation','JANUARY','February','december']);
+console.log('Calculation calendar columns: Jan–Dec, multiple years, full month names and cell metadata passed.');

@@ -4,7 +4,8 @@ import less from 'less';
 // Canonical shared code lives in the main Power BI project. Only the host adapter is generated.
 const reference = await readFile('../src/fieldParameterTrial.ts', 'utf8');
 const method = (start, end) => { const a = reference.indexOf(start), b = reference.indexOf(end, a + start.length); if (a < 0 || b < 0) throw new Error('Shared query adapter boundary changed: update build-visual.mjs before releasing either host.'); return reference.slice(a, b); };
-const imports = `import { answerCashFlow } from './cashFlowQuery';
+const imports = `import { answerTimeWindow } from './timeWindow';
+import { answerCashFlow } from './cashFlowQuery';
 import { answerTransactions } from './answerTransactions';
 import { expandAnswerGroups } from './answerGroups';
 import { answerAging } from './aging';

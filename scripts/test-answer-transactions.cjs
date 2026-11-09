@@ -15,7 +15,7 @@ const config = {table:'P',column:'Field',options:['Group','Tenant','Year','Month
  await answerTransactions(transactionQuestion([{question:'Show Rent and Sales by Group'}]),config,['Rent','Sales'],load);
  assert.deepEqual(calls[0].measures,['Rent','Sales']);
  calls.length=0;
- await answerTransactions(transactionQuestion([{question:'Show Rent by Group for YTD June 2025',selections:[[{table:'T',column:'Group',value:null}]]}]),config,['Rent'],load);
+ await answerTransactions(transactionQuestion([{question:'Show Rent by Group for YTD June 2025',requireSelection:true,selections:[[{table:'T',column:'Group',value:null}]]}]),config,['Rent'],load);
  assert(calls[0].filters.some(f=>f.target.column==='MonthIndex'&&f.values.length===6));
  assert(calls[0].filters.some(f=>f.target.column==='Group'&&f.values[0]===null));
  calls.length=0;
@@ -29,6 +29,9 @@ const config = {table:'P',column:'Field',options:['Group','Tenant','Year','Month
  assert(calls[0].filters.some(f=>f.target.column==='Group'&&f.values[0]==='Furniture'));
  assert(calls[0].filters.some(f=>f.target.column==='MonthIndex'&&f.values.length===6));
  assert.match(summary.text,/Summary grouped by Year/);
+ calls.length=0;
+ await answerTransactions(transactionQuestion([{question:'Show Rent by Group',summarizeBy:'Year',requireSelection:true,selections:[[{table:'T',column:'Group',value:null}]]}]),config,['Rent'],load);
+ assert(calls.at(-1).filters.some(f=>f.target.column==='Group'&&f.values[0]===null));
  calls.length=0;
  const card=await answerTransactions(transactionQuestion([{question:'Show Rent by Group for YTD June 2025',summarizeBy:'Year',summaryCard:true,selections:[[{table:'T',column:'Group',value:'Furniture'}]]}]),config,['Rent'],load);
  assert.equal(calls.length,2,'Cards request their displayed model total');assert.equal(calls[1].totalOnly,true);assert.deepEqual(calls[1].groups,[]);assert.deepEqual(calls[1].filters,calls[0].filters);assert.ok(card.table.modelTotals);

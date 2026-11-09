@@ -691,8 +691,11 @@ assert.deepEqual(matrixToTable.table.columns, ["Product", "Month", "Revenue"], "
     const ui = { automaticGroupingEnabled: () => automatic, showingSavedDashboard: false,
       questions: [], hasConversation: false, input: { value: 'unfinished question' },
       messages: { scrollTop: 0 }, submit: (...args) => submitted.push(args),
-      clear: () => { throw new Error('Refresh must preserve a draft'); }, setRefreshAvailable() {} };
+      clear: () => { throw new Error('Refresh must preserve a draft'); }, refreshStarterPrompts() {}, setRefreshAvailable() {} };
+    let reloads = 0;
+    ui.clearAndReload = async () => { reloads++; };
     GlobalQnaUi.prototype.refreshCurrentView.call(ui);
+    assert.equal(reloads, 1, 'welcome Refresh uses the Clear reload path');
     assert.deepEqual(submitted, []);
     assert.equal(ui.input.value, 'unfinished question');
     if (automatic) {

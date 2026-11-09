@@ -37,6 +37,12 @@
     }
   ],
   "objects": {
+    "defaultCalculation": {
+      "displayName": "askBICS query defaults",
+      "properties": {
+        "expression": { "displayName": "Calculation item TREATAS", "type": { "text": true } }
+      }
+    },
     "parameterTrial": {
       "displayName": "Field parameter test",
       "properties": {
@@ -101,13 +107,6 @@
         "filter8": {
           "type": {
             "filter": true
-          }
-        },
-        "selfFilter": {
-          "type": {
-            "filter": {
-              "selfFilter": false
-            }
           }
         }
       }

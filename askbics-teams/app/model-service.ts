@@ -1,3 +1,4 @@
+import { allCustomKpis } from '../../src/calculationGroups';
 import { expandAnswerGroups } from "../../src/answerGroups";
 import { compileKpis } from "../../src/customKpis";
 import { resolveValueSynonyms } from "../../src/valueSynonyms";
@@ -31,7 +32,7 @@ export class ModelSession {
     return executePowerBi(this.model, dax, this.token, fetcher);
   }
   private config(settings: Partial<QnaLayoutSettings> = {}, time?: ParameterConfig['time']): ParameterConfig {
-    const kpis=compileKpis(settings.customKpis,this.model.measures.map(m=>m.name));
+    const kpis=compileKpis(allCustomKpis(settings),this.model.measures.map(m=>m.name));
     const fields = this.model.dimensions.map(d => ({ ...d, type: d.type || (d.numeric || this.model.year?.column === d.column && this.model.year.table === d.table ? 'number' : 'text') as 'text' | 'number' | 'date', values: this.dictionaries.get(d.name) || [] }));
     const aliases = Object.fromEntries([...this.model.measures, ...kpis.names.map(name=>({name,aliases:[]})), ...fields].map(d => [d.name, d.aliases || []]));
     for (const [name, values] of Object.entries(settings.synonyms || {})) {
@@ -39,7 +40,7 @@ export class ModelSession {
     }
     const setup = time || this.model.time || { yearField: fields.find(f => f.table === this.model.year?.table && f.column === this.model.year.column)?.name };
     // Every target is still resolved from the server allowlist by the original parser/compiler.
-    return { answerGroups:settings.answerGroups, customKpis:settings.customKpis,aging:settings.aging,valueSynonyms: settings.valueSynonyms, alwaysFilter: settings.alwaysFilter, analysis: settings.analysis, revenue: settings.revenue, table: 'Teams', column: 'Grouping', enabled: true, options: fields.map(d => d.name), fields, groupAliases: aliases,
+    return { answerGroups:settings.answerGroups, customKpis:allCustomKpis(settings),calculationGroups:settings.calculationGroups,aging:settings.aging,valueSynonyms: settings.valueSynonyms, alwaysFilter: settings.alwaysFilter, analysis: settings.analysis, revenue: settings.revenue, table: 'Teams', column: 'Grouping', enabled: true, options: fields.map(d => d.name), fields, groupAliases: aliases,
       defaultMeasure: [...this.model.measures.map(m=>m.name),...kpis.names].includes(settings.defaultMeasure||'') ? settings.defaultMeasure : undefined,
       additiveMeasures: (settings.additiveMeasures || []).filter(n => this.model.measures.some(m => m.name === n)), time: setup };
   }
@@ -77,12 +78,12 @@ export class ModelSession {
     const config = this.config(settings, time);
     if (!question.startsWith(';cashflow:')) {
       question = expandAnswerGroups(question, settings.answerGroups);
-      question = resolveValueSynonyms(question, settings.valueSynonyms, config.fields.map(f=>({...f,aliases:config.groupAliases?.[f.name]||f.aliases})), [...this.model.measures.map(m=>m.name),...compileKpis(settings.customKpis,this.model.measures.map(m=>m.name)).names]);
+      question = resolveValueSynonyms(question, settings.valueSynonyms, config.fields.map(f=>({...f,aliases:config.groupAliases?.[f.name]||f.aliases})), [...this.model.measures.map(m=>m.name),...compileKpis(allCustomKpis(settings),this.model.measures.map(m=>m.name)).names]);
     }
     const revenueField = config.fields.find(f => f.name === config.revenue?.field);
     if (revenueQuestion(question).enabled && revenueField && Array.isArray(selections) && selections.some(tuple => Array.isArray(tuple) && tuple.some(v => v.table === revenueField.table && v.column === revenueField.column))) throw new UserError("Clear the cross-filter on the revenue field before calculating Percentage of Revenue.");
     const prefer = (counts: number[]) => settings.cardinalityFallbackEnabled !== false && counts.length > 1 && counts.some(n => n > 0 && n < Math.max(...counts) && n <= Math.max(...counts) * Math.min(100, Math.max(0, Number(settings.cardinalityMatrixThresholdPct ?? 25))) / 100);
-    const engine = new VisualQueryEngine(config, [...this.model.measures.map(m => m.name),...compileKpis(settings.customKpis,this.model.measures.map(m=>m.name)).names], (p, c) => this.request(p, c, crossFilter), prefer);
+    const engine = new VisualQueryEngine(config, [...this.model.measures.map(m => m.name),...compileKpis(allCustomKpis(settings),this.model.measures.map(m=>m.name)).names], (p, c) => this.request(p, c, crossFilter), prefer);
     try { const answer = (await engine.run(question))!; return {...answer, daxQueries: [...this.daxQueries]}; } catch (e) { throw new UserError(e instanceof Error ? e.message : 'Could not interpret the question.'); }
     } finally { this.deadline = 0; }
   }
@@ -129,8 +130,9 @@ export class ModelSession {
       }
       const { d, ref } = this.target(raw.target);
       if (Array.isArray(raw.values)) {
-        if (raw.operator !== 'In' || raw.values.length > 5000) throw new UserError('Unsupported filter operator.');
-        return `TREATAS({${raw.values.map((v: unknown) => this.value(v, d.type === 'date')).join(',')}}, ${ref})`;
+        if (!['In','NotIn'].includes(raw.operator) || raw.values.length > (plan.cashFlowData?20000:5000)) throw new UserError('Unsupported filter operator.');
+        const values=raw.values.map((v: unknown) => this.value(v, d.type === 'date')).join(',');
+        return raw.operator==='NotIn'?`FILTER(ALL(${ref}), NOT (${ref} IN {${values}}))`:`TREATAS({${values}}, ${ref})`;
       }
       if (Array.isArray(raw.conditions) && ['And', 'Or'].includes(raw.logicalOperator)) {
         const operators: Record<string, string> = { GreaterThanOrEqual: '>=', LessThan: '<', GreaterThan: '>', LessThanOrEqual: '<=', Is: '=', IsNot: '<>' };

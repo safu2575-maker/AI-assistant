@@ -1,3 +1,5 @@
+import { calculationItemFilter } from "./calculationItemFilter";
+import { allCustomKpis } from './calculationGroups';
 import { fitVisualViewport } from './visualViewport';
 import powerbi from "powerbi-visuals-api";
 import { IFilterTarget } from "powerbi-models";
@@ -11,6 +13,10 @@ import { readModelMatrix } from "./modelMatrix";
 import { BasicFilter } from "powerbi-models";
 
 export class Visual implements powerbi.extensibility.visual.IVisual {
+    private calculationExpression = "";
+    private calculationEditor?: HTMLTextAreaElement;
+    private authorMode = false;
+    private calculationError = "";
     private parameterTrial: FieldParameterTrial;
     private readonly viewportFit?: ReturnType<typeof fitVisualViewport>;
     private readonly host: powerbi.extensibility.visual.IVisualHost;
@@ -48,6 +54,7 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         this.parameterTrial = new FieldParameterTrial(options.element, this.host);
         this.parameterTrial.onDataContextChanged = () => this.ui.invalidateModelAnswers();
         this.parameterTrial.onProgress = message => this.ui.setLoadingStage(message);
+        this.ui.previewCalculations = (groups, question) => this.parameterTrial.previewCalculations(groups, question);
         this.ui.prepareQuestion = (question, refresh) => this.parameterTrial.prepareQuestion(question, refresh);
         this.ui.cancelQuestion = () => this.parameterTrial.cancelQuestion();
         this.ui.transactionNavigation = enter => this.parameterTrial.transactionNavigation(enter);
@@ -99,15 +106,56 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
             });
         };
         this.ui.automaticGroupingEnabled = () => this.parameterTrial.automaticEnabled();
-        this.ui.exportBackupData = this.parameterTrial.exportBackupData;
-        this.ui.validateBackupData = this.parameterTrial.validateBackupData;
-        this.ui.importBackupData = this.parameterTrial.importBackupData;
-        this.ui.mountDataSettings = container => this.parameterTrial.mountSettings(container);
+        this.ui.exportBackupData = () => ({
+            ...(this.parameterTrial.exportBackupData() as object),
+            ...(this.authorMode ? { calculationItemExpression: this.calculationExpression } : {})
+        });
+        this.ui.validateBackupData = data => {
+            this.parameterTrial.validateBackupData(data);
+            if (this.authorMode && data && typeof data === "object" && "calculationItemExpression" in data) {
+                if (typeof data.calculationItemExpression !== "string") throw new Error("Invalid calculation item expression.");
+                calculationItemFilter(data.calculationItemExpression);
+            }
+        };
+        this.ui.importBackupData = data => {
+            this.ui.validateBackupData?.(data);
+            this.parameterTrial.importBackupData(data);
+            if (this.authorMode && data && typeof data === "object" && "calculationItemExpression" in data) {
+                this.host.persistProperties({ merge: [{ objectName: "defaultCalculation", selector: null as unknown as powerbi.data.Selector,
+                    properties: { expression: data.calculationItemExpression as string } }] });
+            }
+        };
+        this.ui.mountDataSettings = container => {
+            this.removeCalculationEditor();
+            this.parameterTrial.mountSettings(container);
+            const advanced = this.parameterTrial.advancedSettings;
+            if (!this.authorMode || !advanced) return;
+            const label = document.createElement("label");
+            label.dataset.settingsHelp = "Applies a single native calculation item to this visual. Paste a single-item TREATAS expression. Clear it to remove the default.";
+            const caption = document.createElement("span");
+            caption.textContent = "Calculation item TREATAS";
+            const input = document.createElement("textarea");
+            input.rows = 3;
+            input.value = this.calculationExpression;
+            input.placeholder = 'TREATAS({"Optimization"}, \'Field Optimization\'[Calculation group column])';
+            input.oninput = () => input.setCustomValidity("");
+            label.append(caption, input);
+            advanced.append(label);
+            this.calculationEditor = input;
+        };
         this.ui.mountTimeSettings = container => this.parameterTrial.mountTimeSettings(container);
         this.ui.timeSettings = () => this.parameterTrial.readTimeSetup();
         this.ui.analysisDateFields = this.parameterTrial.analysisDateFields;
-        this.ui.saveDataSettings = () => this.parameterTrial.saveSettings();
-        this.ui.cancelDataSettings = () => this.parameterTrial.cancelSettings();
+        this.ui.validateDataSettings = () => this.validateCalculationEditor() && this.parameterTrial.validateSettings();
+        this.ui.saveDataSettings = () => {
+            if (!this.validateCalculationEditor() || !this.parameterTrial.saveSettings()) return false;
+            const expression = this.calculationEditor?.value.trim();
+            if (this.authorMode && expression !== undefined && expression !== this.calculationExpression) {
+                this.host.persistProperties({ merge: [{ objectName: "defaultCalculation", selector: null as unknown as powerbi.data.Selector, properties: { expression } }] });
+            }
+            return true;
+        };
+        this.ui.cancelDataSettings = () => { this.removeCalculationEditor(); this.parameterTrial.cancelSettings(); };
         this.ui.measureOptions = () => this.parameterTrial.measureOptions();
         this.parameterTrial.defaultMeasure = () => this.engine.getLayoutSettings().defaultMeasure;
         this.parameterTrial.startup = () => this.engine.getLayoutSettings().startup;
@@ -116,7 +164,8 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         this.parameterTrial.alwaysFilter = () => this.engine.getLayoutSettings().alwaysFilter;
         this.parameterTrial.revenue = () => this.engine.getLayoutSettings().revenue;
         this.parameterTrial.answerGroups = () => this.engine.getLayoutSettings().answerGroups;
-        this.parameterTrial.customKpis = () => this.engine.getLayoutSettings().customKpis;
+        this.parameterTrial.customKpis = () => allCustomKpis(this.engine.getLayoutSettings());
+        this.parameterTrial.calculationGroups = () => this.engine.getLayoutSettings().calculationGroups;
         this.parameterTrial.aging = () => this.engine.getLayoutSettings().aging;
         this.parameterTrial.analysis = () => this.engine.getLayoutSettings().analysis;
         this.ui.analysisModelBinding = hierarchy => this.parameterTrial.analysisModelBinding(hierarchy);
@@ -142,6 +191,20 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         if(options.viewport)this.viewportFit?.update(options.viewport);
         // Persisted visual objects are not guaranteed to be attached to the
         // first data view in a multi-mapping update.
+        if (options.viewMode !== undefined) this.authorMode = options.viewMode === powerbi.ViewMode.Edit;
+        if (!this.authorMode && this.calculationEditor) this.removeCalculationEditor();
+        const defaults = options.dataViews?.map(view => view.metadata?.objects?.defaultCalculation).find(Boolean);
+        if (defaults) {
+            const expression = String(defaults.expression ?? "");
+            if (expression !== this.calculationExpression) {
+                this.calculationExpression = expression;
+                this.calculationError = "";
+                try {
+                    const filter = calculationItemFilter(expression);
+                    this.parameterTrial.setCalculationFilter(filter);
+                } catch (error) { this.calculationError = String((error as Error).message); }
+            }
+        }
         options.dataViews?.forEach(view => this.parameterTrial.hydrate(view));
         const dataView = this.parameterTrial.selectDataView(options.dataViews || []);
         const stored = String(dataView?.metadata?.objects?.state?.conversation || "");
@@ -180,6 +243,22 @@ export class Visual implements powerbi.extensibility.visual.IVisual {
         return { cards: [] };
     }
 
+    private removeCalculationEditor(): void {
+        this.calculationEditor?.parentElement?.remove();
+        this.calculationEditor = undefined;
+    }
+
+    private validateCalculationEditor(): boolean {
+        const input = this.calculationEditor;
+        if (!this.authorMode || !input) return true;
+        try { calculationItemFilter(input.value); return true; }
+        catch (error) {
+            input.setCustomValidity(String((error as Error).message));
+            if (this.parameterTrial.advancedSettings) this.parameterTrial.advancedSettings.open = true;
+            input.reportValidity();
+            return false;
+        }
+    }
     public destroy(): void { this.viewportFit?.destroy(); this.ui.cancelSelectionDispatch(); this.parameterTrial.destroy(); }
 
     private persistState = (): void => {

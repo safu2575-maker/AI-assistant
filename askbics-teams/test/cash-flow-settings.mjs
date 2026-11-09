@@ -20,7 +20,7 @@ try{
  await openTab();
  assert.equal(await page.locator('.askbics-cash-settings').isVisible(),true);
  await page.getByRole('button',{name:'Company code *: Choose…',exact:true}).click();await page.getByRole('option',{name:'Company',exact:true}).click();
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  assert.match(await page.locator('.askbics-cash-settings [role=alert]').textContent(),/Document number/);
  assert.equal(await page.evaluate(()=>window.saved()),undefined);
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
@@ -32,7 +32,7 @@ try{
  const checks=page.locator('.askbics-cash-settings .askbics-settings-multiselect input[type=checkbox]');await checks.first().waitFor();for(let i=0;i<10;i++)await checks.nth(i).check();
  assert.equal(await page.locator('.askbics-cash-settings input[type=checkbox]:checked').count(),10);
  assert.ok(await page.locator('.askbics-cash-settings input[type=checkbox]:disabled').count()>0);await page.keyboard.press('Escape');
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  const saved=await page.evaluate(()=>window.saved());assert.equal(saved.fields.company,'Company');assert.equal(saved.measure,'Amount');assert.equal(saved.displayColumns.length,10);assert.deepEqual(saved.rules,[]);
  await page.evaluate(()=>window.openSettings());await openTab();assert.equal(await page.locator('.askbics-cash-settings select[aria-label="Company code *"]').inputValue(),'Company');
  assert.ok(await page.locator('.askbics-cash-settings .askbics-settings-help-icon').count()>0);

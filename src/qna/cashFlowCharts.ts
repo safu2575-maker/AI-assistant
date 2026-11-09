@@ -15,6 +15,7 @@ export function cashFlowChart(host:HTMLElement,allocations:CashAllocation[],kind
  if(kind==='flow'){
  let shown=0;const more=node('button','Show more paths') as HTMLButtonElement;more.type='button';
  const draw=()=>{more.remove();for(const a of allocations.slice(shown,shown+10)){const section=node('section');section.className='askbics-trace-flow';section.append(node('h3',(a.amount<0?'Payment':'Receipt')+' '+amount(a.amount)+' '+(a.path[0]?.currency||'')+' · '+a.status));
+ if(a.basis)section.append(node('p',a.basis));
  section.append(node('small','Company '+(a.path[0]?.company||'—')));
  const steps=cashFlowSteps(a.path);
  steps.forEach((postings,i)=>{
@@ -33,7 +34,7 @@ export function cashFlowChart(host:HTMLElement,allocations:CashAllocation[],kind
  const groups=new Map<string,CashAllocation[]>();for(const a of allocations){const p=a.path[0];const key=JSON.stringify([p.company,p.currency,a.amount<0?'Payment':'Receipt']);const group=groups.get(key)||[];group.push(a);groups.set(key,group);}
  for(const group of groups.values()){
  const p=group[0].path[0],total=group.reduce((n,a)=>n+Math.abs(a.amount),0);const section=node('section');section.append(node('h3',(group[0].amount<0?'Payment':'Receipt')+' allocation · Company '+p.company+(p.currency?' · '+p.currency:'')));
- const destinations=new Map<string,{label:string,value:number}>();for(const a of group){const end=a.path.at(-1)!;const label=a.status==='Resolved'?(end.accountDescription||a.account||a.category):'Unresolved · '+a.status;const key=JSON.stringify([a.account,label]);const old=destinations.get(key)||{label,value:0};old.value+=Math.abs(a.amount);destinations.set(key,old);}
+ const destinations=new Map<string,{label:string,value:number}>();for(const a of group){const end=a.path.at(-1)!;const label=a.status==='Estimated'?'Estimated · '+(end.accountDescription||a.account||a.category):a.status==='Resolved'?(end.accountDescription||a.account||a.category):'Unresolved · '+a.status;const key=JSON.stringify([a.account,label]);const old=destinations.get(key)||{label,value:0};old.value+=Math.abs(a.amount);destinations.set(key,old);}
  const entries=[...destinations.values()].sort((a,b)=>b.value-a.value);const shown=entries.slice(0,12);if(entries.length>12)shown.push({label:'Other destinations ('+(entries.length-12)+')',value:entries.slice(12).reduce((n,e)=>n+e.value,0)});
  const height=Math.max(180,shown.length*90+100),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 640 '+height);svg.setAttribute('role','img');svg.setAttribute('aria-label','Allocated cash '+amount(total)+' across '+entries.length+' destinations');svg.classList.add('askbics-trace-sankey');
  const shape=(tag:string,attrs:Record<string,string>,text='')=>{const e=document.createElementNS(svg.namespaceURI,tag);for(const [k,v]of Object.entries(attrs))e.setAttribute(k,v);e.textContent=text;svg.append(e);return e;};

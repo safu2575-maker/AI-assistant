@@ -155,7 +155,7 @@ try{
  assert.equal(await page.getByRole('dialog',{name:'Paste settings',exact:true}).isVisible(),true);
  await page.screenshot({path:'test-output/settings-backup.png'});
  await page.getByRole('dialog',{name:'Paste settings',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  await new Promise(resolve=>setTimeout(resolve,1000));
  assert.equal(stored.savedReports.length,1);
  assert.equal(stored.layoutSettings.customKpis[0].name,'Rent ratio');
@@ -215,7 +215,7 @@ try{
  await page.getByRole('checkbox',{name:'Include Others',exact:true}).focus();
  await page.waitForFunction(()=>document.querySelector('.askbics-qna__tooltip.is-visible')?.textContent?.includes('Combines members outside the Top list'));
  await page.screenshot({path:'test-output/analysis-settings.png'});
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  await ask('Explain Rent Measure variance for 2026');
  await page.locator('.askbics-analysis-panel').first().waitFor();
  assert.ok(await page.locator('.askbics-analysis-panel').count()>=2);
@@ -386,7 +386,7 @@ try{
  for(const member of ['Assigned Tenant Name','City'])await groupsForm.locator('select').nth(1).selectOption(member,{force:true});
  await groupsForm.getByRole('button',{name:'Add / update group',exact:true}).click();
  await page.screenshot({path:'test-output/answer-groups.png'});
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  for(let n=0;n<100&&!stored?.layoutSettings.answerGroups?.length;n++)await new Promise(r=>setTimeout(r,50));
  assert.equal(stored.layoutSettings.answerGroups[0].name,'Tenant details');
  await page.reload();

@@ -2,6 +2,7 @@
 export type CashRole = 'bank' | 'intermediate' | 'destination';
 export interface CashRule { account:string; role:CashRole; category:string }
 export interface CashSetup {
+ allocationPolicy?:'verified'|'proportional';
  fields:Record<string,string>; measure:string; rules:CashRule[]; displayColumns?:string[];
  scope?: {companies:string[]; filters:Array<{field:string;values:string[]}>; from?:string;to?:string};
 }
@@ -12,8 +13,9 @@ export interface CashPosting {
  date:string; amount:number; clearing?:string; clearingYear?:string; clearingDate?:string;
  reference?:string; referenceYear?:string; referenceItem?:string; partner?:string; type?:string; accountDescription?:string; sourceValues?:Record<string,string>;
 }
-export interface CashAllocation { root:string; amount:number; category:string; account:string; status:string; path:CashPosting[] }
-export interface CashResult { allocations:CashAllocation[]; receipts:number; payments:number; unresolved:number; roots:number; complete:boolean }
+export interface CashGroup {id:string;payments:CashPosting[];selectedRoots:string[];destinations:Array<{account:string;description:string;amount:number}>;paths:CashPosting[][]}
+export interface CashAllocation { groupId?:string;basis?:string; root:string; amount:number; category:string; account:string; status:string; path:CashPosting[] }
+export interface CashResult { groups?:CashGroup[]; allocations:CashAllocation[]; receipts:number; payments:number; unresolved:number; roots:number; complete:boolean }
 export const cashKey=(p:CashPosting)=>JSON.stringify([p.company,p.year,p.document,p.item]);
 const docKey=(p:CashPosting)=>JSON.stringify([p.company,p.year,p.document,p.currency]);
 const clearingKey=(p:CashPosting)=>JSON.stringify([p.company,p.clearingYear,p.clearing,p.account,p.partner||'',p.currency]);
@@ -25,6 +27,7 @@ export const cashFields = [
  ['partner','Vendor/customer identifier',false],['type','Document type',false],['accountDescription','Account description',false]
 ] as const;
 export function validateCashSetup(s:CashSetup,fields:string[],measures:string[]) {
+ if(s?.allocationPolicy!==undefined&&!['verified','proportional'].includes(s.allocationPolicy))throw new Error('Choose a valid cash allocation policy.');
  if(!s||!s.fields||!Array.isArray(s.rules))throw new Error('Configure cash-flow field mappings and account rules.');
  for(const [key,label,required] of cashFields)if((required||s.fields[key])&&!fields.includes(s.fields[key]))throw new Error('Choose an available '+label+' field.');
  const mapped=Object.values(s.fields).filter(Boolean);if(new Set(mapped).size!==mapped.length)throw new Error('Use a separate source field for each mapping.');
@@ -37,7 +40,7 @@ export function validateCashSetup(s:CashSetup,fields:string[],measures:string[])
 
  const accounts=new Set<string>();for(const r of s.rules){if(!r.account.trim()||accounts.has(r.account)||!['bank','intermediate','destination'].includes(r.role)||r.role==='destination'&&!r.category.trim())throw new Error('Use unique accounts, valid roles and a category for each destination.');accounts.add(r.account);}
 }
-export interface CashScope {company:string;currency:string;from:string;to:string;allDates?:boolean;banks?:string[];startKeys?:string[];complete:boolean;maxDepth?:number;maxSteps?:number}
+export interface CashScope {allocationPolicy?:'verified'|'proportional';company:string;currency:string;from:string;to:string;allDates?:boolean;banks?:string[];startKeys?:string[];complete:boolean;maxDepth?:number;maxSteps?:number}
 export interface CashCheckpoint {phase:'loading'|'tracing';reason:string;company:string;document?:string;depth?:number;steps?:number;queries?:number;rows?:number;automatic?:boolean}
 export interface CashContinuation {active:()=>boolean;pause:(checkpoint:CashCheckpoint)=>Promise<void>}
 /** Existing synchronous callers retain their original bounded behaviour. */
@@ -57,7 +60,7 @@ function* traceCashWork(postings:CashPosting[],rules:CashRule[],scope:CashScope,
  const role=new Map(rules.map(r=>[r.account,r]));
  const rows=postings.filter(p=>p.company===scope.company&&p.currency===scope.currency);
  const put=(map:Map<string,CashPosting[]>,key:string,p:CashPosting)=>{const a=map.get(key)||[];a.push(p);map.set(key,a);};
- for(const p of rows){if(!p.document||!p.item||(!scope.allDates&&!validDate(p.date))||!Number.isFinite(p.amount))throw new Error('Posting data contains missing identities, invalid dates or nonnumeric amounts.');const key=cashKey(p);if(ids.has(key))throw new Error('Duplicate posting identity: '+p.document+'/'+p.item+'. Map source/ledger data to one unique posting dataset.');ids.add(key);if(!scope.allDates&&p.date>scope.to)continue;put(documents,docKey(p),p);if(p.clearing&&(scope.allDates||(p.clearingDate&&validDate(p.clearingDate)&&p.clearingDate<=scope.to)))put(clearings,clearingKey(p),p);}
+ for(const p of rows){const issues:string[]=[];if(!p.document)issues.push('Document number is missing');if(!p.item)issues.push('Line item is missing');if(!scope.allDates&&!validDate(p.date))issues.push('Posting date is invalid: '+JSON.stringify(p.date));if(!Number.isFinite(p.amount))issues.push('Posting amount is not a finite number: '+String(p.amount));if(issues.length){const label=(value:string)=>value?JSON.stringify(value):'(blank)';throw new Error('Posting validation failed (identity/date/amount). Company: '+label(p.company)+'; Fiscal year: '+label(p.year)+'; Document: '+label(p.document)+'; Line item: '+label(p.item)+'. '+issues.join('; ')+'. No posting was skipped.');}const key=cashKey(p);if(ids.has(key))throw new Error('Duplicate posting identity: '+p.document+'/'+p.item+'. Map source/ledger data to one unique posting dataset.');ids.add(key);if(!scope.allDates&&p.date>scope.to)continue;put(documents,docKey(p),p);if(p.clearing&&(scope.allDates||(p.clearingDate&&validDate(p.clearingDate)&&p.clearingDate<=scope.to)))put(clearings,clearingKey(p),p);}
  const postingKeys=new Map(rows.map(p=>[p,cashKey(p)]));
  const keyOf=(p:CashPosting)=>postingKeys.get(p)||cashKey(p);
  const starts=new Set(scope.startKeys),banks=new Set(scope.banks);

@@ -80,7 +80,7 @@ try{
  await valuePicker.getByRole('checkbox',{name:'Doha',exact:true}).uncheck();
  await valuePicker.getByRole('searchbox').press('Escape');
  await groupsForm.getByLabel('Show City in answers',{exact:true}).uncheck();
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  await page.getByRole('button',{name:'Open Q&A, autocomplete, table, and matrix settings'}).click();
  await page.getByRole('button',{name:'Field & measure groups',exact:true}).click();
  await groupsForm.getByRole('button',{name:'Edit',exact:true}).click();
@@ -88,7 +88,7 @@ try{
  assert.match(await groupsForm.getByRole('button',{name:'Filter values for City',exact:true}).innerText(),/Riyadh/);
  await page.screenshot({path:'test-output/group-filters.png'});
  await groupsForm.getByRole('button',{name:'Cancel edit',exact:true}).click();
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  for(let n=0;n<100&&!stored?.layoutSettings.answerGroups?.length;n++)await new Promise(r=>setTimeout(r,50));
  assert.equal(stored.layoutSettings.answerGroups[0].name,'Tenant details');
 
@@ -115,7 +115,7 @@ try{
  await visibility.getByRole('checkbox',{name:'Select all',exact:true}).check();
  await visibility.getByRole('checkbox',{name:'City',exact:true}).uncheck();
  await visibility.getByRole('checkbox',{name:'Tenant details',exact:true}).uncheck();
- await page.getByRole('button',{name:'Save settings',exact:true}).click();
+ await page.getByRole('button',{name:'Save all & close',exact:true}).click();
  await page.getByRole('button',{name:'Open Q&A, autocomplete, table, and matrix settings'}).click();
  await page.getByRole('button',{name:'Suggestions',exact:true}).click();
  await page.locator('summary').filter({hasText:'Show in Summarize by'}).click();

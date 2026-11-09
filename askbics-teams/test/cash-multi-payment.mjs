@@ -1,0 +1,56 @@
+import {build} from 'esbuild';
+import {chromium} from 'playwright-core';
+import less from 'less';
+import {readFile} from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const bundle=await build({stdin:{contents:`
+import {traceCashComponents} from './src/cashFlowDiscovery';
+import {cashKey} from './src/cashFlow';
+import {cashFlowReport} from './src/qna/cashFlowReport';
+import {cashFlowSettings} from './src/qna/cashFlowSettings';
+import {GlobalQnaUi} from './src/qna/ui';import {GlobalQnaEngine} from './src/qna/engine';
+const ui=new GlobalQnaUi(document.getElementById('root'),new GlobalQnaEngine({fields:[],measures:[],rowCount:0,selectedIndices:[],formatValue:(_,v)=>String(v)}));
+ui.copyTextAsTsv=async rows=>{window.copied=rows;return true;};ui.previewPdf=async report=>{window.pdf=report;};
+const host=document.createElement('div');host.className='askbics-cash-body';document.querySelector('.askbics-qna').append(host);
+const p=(document,item,account,amount,clearing='')=>({company:'1',currency:'SAR',year:'2026',date:'2026-01-01',document,item,account,amount,clearing,clearingYear:'2026'});
+const setup={fields:{company:'Company',document:'Document',clearing:'Clearing',account:'Account'},measure:'Amount',rules:[],displayColumns:['Document','Amount']};
+window.openReport=async(policy='verified',mixed=false)=>{
+ const rows=[p('P1','1','BANK',-60),p('P1','2','AP',60,'C'),p('P2','1','BANK',-40),p('P2','2','AP',40,'C'),...[50,30,20].flatMap((n,i)=>[p('I'+i,'1','AP',-n,'C'),p('I'+i,'2',mixed&&i===2?'ASSET':'EXP',n)])];
+ const roots=[rows[0],rows[2]],scope={company:'1',currency:'SAR',from:'',to:'',allDates:true,startKeys:roots.map(cashKey),complete:true,allocationPolicy:policy};
+ const result=await traceCashComponents(rows,[],scope,{active:()=>true,pause:async()=>{}});
+ cashFlowReport(host,{roots,result,postings:rows,verified:new Set(result.verifiedRoots),finished:new Set(roots.map(cashKey)),reason:'',conflict:false},result.allocations,'Cash flow',t=>ui.table(t),setup);
+};
+window.settings=()=>{host.replaceChildren();const draft=cashFlowSettings(setup,['Company','Document','Clearing','Account'],['Amount']);host.append(draft.element);window.readSetup=draft.read;};
+await window.openReport();`,resolveDir:'..',loader:'ts'},bundle:true,write:false,platform:'browser',format:'esm'});
+const css=await less.render(await readFile('../style/visual.less','utf8'),{paths:['../style']});
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+try{
+ const page=await browser.newPage({viewport:{width:1500,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.setContent('<div id="root" class="askbics-host" style="position:relative;height:950px"></div>');await page.addStyleTag({content:css.css});await page.addScriptTag({content:bundle.outputFiles[0].text,type:'module'});
+ await page.getByRole('button',{name:'View trace',exact:true}).first().waitFor();
+ assert.ok(await page.locator('.askbics-status-badge').count()>0);
+ await page.getByRole('button',{name:'Copy table data for Excel',exact:true}).click();
+ assert.ok((await page.evaluate(()=>window.copied)).flat().some(v=>String(v).includes('Verified · Destination only')));
+ assert.ok(await page.locator('.askbics-status-badge.is-verified').count()>0);
+ await page.getByRole('button',{name:'View table PDF preview',exact:true}).click();
+ assert.ok(JSON.stringify(await page.evaluate(()=>window.pdf)).includes('Verified · Destination only'));
+ await page.getByRole('button',{name:'View trace',exact:true}).first().click();
+ assert.ok((await page.getByRole('dialog').textContent()).includes('invoice pairing not established'));
+ await page.getByRole('button',{name:'Close entries',exact:true}).click();
+ await page.evaluate(()=>window.openReport('verified',true));
+ await page.getByRole('tab',{name:'Clearing groups',exact:true}).click();
+ await page.getByRole('button',{name:'Copy table data for Excel',exact:true}).click();
+ assert.equal((await page.evaluate(()=>window.copied)).length,3);
+ await page.getByRole('button',{name:'View group evidence',exact:true}).first().click();
+ await page.getByText('Shared group evidence; no individual payment-to-invoice pairing is inferred.',{exact:true}).waitFor();
+ await page.evaluate(()=>window.openReport('proportional',true));
+ await page.getByRole('tab',{name:'Estimated allocations',exact:true}).click();
+ assert.ok(await page.locator('.askbics-status-badge.is-estimated').count()>0);
+ await page.getByRole('button',{name:'Copy table data for Excel',exact:true}).click();
+ const copied=await page.evaluate(()=>window.copied);assert.ok(copied[0].includes('Allocation status'));assert.ok(copied.slice(1,-1).every(r=>r.includes('Estimated · Proportional')));
+ await page.evaluate(()=>window.settings());
+ await page.getByRole('button',{name:/Allocation policy/}).click();
+ await page.getByRole('option',{name:'Allow proportional estimates',exact:true}).click();
+ assert.equal(await page.evaluate(()=>window.readSetup().allocationPolicy),'proportional');
+ assert.deepEqual(errors,[]);console.log('Multi-payment UI: verified attribution, mixed-group evidence, estimated export labels and saved policy passed.');
+}finally{await browser.close();}

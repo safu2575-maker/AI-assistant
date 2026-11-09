@@ -168,7 +168,7 @@ const fillerConfig={...config,fields:config.fields.map(field=>field.name==='Assi
 assert.deepEqual(planParameterQuestion('Rent Measure by Year Please',fillerConfig,['Rent Measure']).filters[0].values,['Please'],'known business values take precedence over filler words');
 assert.deepEqual(planParameterQuestion('Rent Measure by Year Shw',fillerConfig,['Rent Measure']).filters[0].values,['Shw'],'known business values take precedence over command typos');
 assert.throws(()=>plan('show Rent Measure by City not Riyadh'),/Could not safely interpret/);
-assert.throws(()=>plan('show Rnet Measure by City'),/Could not safely interpret/);
+assert.deepEqual(plan('show Rnet Measure by City').measures,['Rent Measure']);
 assert.throws(()=>plan('show Rent Measure by City exclude unknown tenant'),/Could not safely interpret/);
 for (const question of ['list Assigned Tenant Name', 'show list of Assigned Tenant Name', 'Assigned Tenant Name as a list', 'Assigned Tenant Name in a list']) {
   assert.equal(plan(question).listOnly,true,question);
@@ -597,6 +597,12 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert.deepEqual(denominator.table.modelRawRows,[[100]],'fixed revenue member supplies the denominator even without aggregate metadata');
   const unavailableTotal = await safeScalar.requestScalarWithGrouping({groups:[],measures:['Amount'],filters:[],summary:[]},safeConfig,false);
   assert.deepEqual(unavailableTotal.table.rows,[['—']],'one arbitrary visible group is not an overall model total');
+  const agingScalarConfig={...safeConfig,options:['LineItem','Due'],fields:[...safeConfig.fields,{name:'Due',table:'Aging',column:'Due',type:'date'}]};
+  safeScalar.requestBase=async query=>{scalarCalls.push(query);return {table:{columns:['Due','Amount'],rows:[['2026-11-04','100']],modelRawRows:[[null,100]],modelRawTotals:[null,350],modelFormats:[undefined,'0'],modelResultComplete:true}};};
+  const agingScalar=await safeScalar.requestScalarWithGrouping({groups:[],measures:['Amount'],filters:[denominatorFilter],summary:[],agingQuery:true,agingDateField:'Due'},agingScalarConfig,false);
+  assert.deepEqual(scalarCalls.at(-1).groups,['Due'],'aging scalar avoids unrelated first retail field');
+  assert.deepEqual(agingScalar.table.modelRawRows,[[350]],'aging uses model total rather than unrelated fixed-member shortcut');
+  await assert.rejects(()=>safeScalar.requestScalarWithGrouping({groups:[],measures:['Amount'],filters:[],summary:[],agingQuery:true,agingDateField:'Missing'},agingScalarConfig,false),/aging date field/);
   const {revenueRequest}=require('../.tmp/test/revenue');
   const revenueLoads=[];
   const revenuePlan={groups:['LineItem'],measures:['Amount'],filters:[],summary:[],presentation:'table'};
@@ -930,6 +936,18 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   assert.deepEqual(directTrial.measureOptions(),['Rent Measure']);
   directTrial.requestConfig=directTrial.readConfig();
   assert.equal(directTrial.matches(directView,{groups:['City'],measures:['Rent Measure'],filters:[],summary:[]},parameterFilters({groups:['City'],measures:['Rent Measure'],filters:[],summary:[]},directTrial.readConfig())),true);
+  const defaultCalls=[];
+  const defaultTrial=new FieldParameterTrial({prepend(){}},{applyJsonFilter(filter){defaultCalls.push(filter);},persistProperties(){}});
+  const broadView={metadata:{columns:[]},table:{columns:[discoveredColumn('City'),discoveredColumn('Assigned Group')],rows:[]}};
+  defaultTrial.update(broadView);
+  defaultTrial.runStartup(); defaultTrial.runStartup();
+  assert.deepEqual(defaultCalls.map(filter=>filter.values),[["Assigned Group"]]);
+  assert.equal(defaultTrial.canFetchMoreData(),false,'do not page the initial all-fields response');
+  // Repeat refresh with the default selector already submitted. The mock has no unrestricted host refresh.
+  await defaultTrial.clearAndReload();
+  assert.deepEqual(defaultCalls.map(filter=>filter.values),[["Assigned Group"],["Assigned Group"]]);
+  assert.equal(defaultTrial.dataRequestsStopped,false,'accept the refreshed default data after cancellation');
+  defaultTrial.destroy();
   const startupCalls=[];
   directTrial.startup=()=>({enabled:true,fields:['City'],measure:'Rent Measure'});
   directTrial.requestBase=async(plan)=>{startupCalls.push(plan);return {text:''};};
@@ -1037,11 +1055,13 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   let recovering;
   try { recovering=recovery.request({groups:['Year'],measures:['Rent Measure'],filters:[],summary:[]},config); }
   finally {global.setTimeout=realTimeout;}
+  recovery.update(view(['City','Year'],[])); // Broad response, no selector acknowledgement.
+  const initialSelectorCall = recoveryCalls.at(-1);
   scheduled.find(item=>item.delay===4000).callback();
-  assert.equal(recoveryCalls.at(-1)[0],null,'no host response retries by clearing owned query filters');
-  assert.equal(recovery.pending.clearing,true,'retry must await clear acknowledgement');
-  recovery.update(view(['City'],[]));
-  assert.equal(recoveryCalls.at(-1)[0][0].values[0],'Year','requested grouping reapplied after clear');
+  assert.equal(recoveryCalls.length,2,'a broad unacknowledged response must not suppress the single retry');
+  assert.deepEqual(recoveryCalls.at(-1),initialSelectorCall,'retry resubmits the narrow filters without clearing');
+  scheduled.find(item=>item.delay===4000).callback();
+  assert.equal(recoveryCalls.length,2,'no duplicate recovery request');
   recovery.update(view(['Year'],[],[45]));
   assert.equal((await recovering).table.rows[0][1],'45.00');
   const callsAfterRecovery=recoveryCalls.length;
@@ -1106,10 +1126,11 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 
   let cleared = false;
   const unfiltered = trial.prepareQuestion('Rent Measure by Year', true).then(value => { cleared = true; return value; });
-  assert.equal(calls.at(-2)[0], null, 'clear old predicates before sending a replacement');
+  assert.deepEqual(calls.at(-1)[0], filteredPayload.slice(1), 'Refresh removes only old model predicates, retaining the field selector');
   assert(calls.filter(call => call[0]).every(call => call[0].every(filter => filter.operator !== 'All')), 'never accumulate All predicates');
   trial.update(view(['Year'], filteredPayload)); await flush(); assert.equal(cleared, false, 'old tenant filter must not leak into the next question');
-  trial.update(view(['Year'], [])); await unfiltered;
+  trial.update(view(['Year'], [])); // acknowledge predicate removal
+  trial.update(view(['Year'], yearFilters)); await unfiltered;
 
   const multi = trial.prepareQuestion('Rent Measure by City and Year for June 2025 as a table');
   const multiFilters = calls.at(-1)[0];
@@ -1259,12 +1280,19 @@ const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
   trial.update(resolvedView);
   const selectionAnswer = await trial.prepareQuestion('Rent Measure by Assigned Tenant Name');
   assert.deepEqual(selectionAnswer.table.modelSelections[0], [{ table: 'Retail', column: 'Tenant', value: 'Assigned Tenant Name-0' }]);
+  resolvedView.categorical.categories[0].values[0] = null;
+  trial.update(resolvedView);
+  const blankAnswer = await trial.prepareQuestion('Rent Measure by Assigned Tenant Name');
+  assert.deepEqual(blankAnswer.table.modelSelections[0], [{table:'Retail',column:'Tenant',value:null}]);
+  assert.equal(blankAnswer.table.modelRowSelections[0][0][0].value,null);
   const beforeRetry = refreshes;
   const waiting = trial.prepareQuestion('Rent Measure by City');
   const cancelledWaiting = assert.rejects(waiting, /cancelled/);
   trial.cancelQuestion(); await cancelledWaiting;
+  const beforeReapply = calls.length;
   const retry = trial.prepareQuestion('Rent Measure by City');
-  assert.equal(refreshes, beforeRetry + 1, 'retrying an unchanged filter must explicitly ask the host for data');
+  assert.equal(refreshes, beforeRetry);
+  assert.equal(calls.length, beforeReapply + 1, 'retry reapplies an unconfirmed request after cancellation');
   trial.update(view(['City'], calls.at(-1)[0], [17])); await retry;
   trial.destroy();
   console.log('Parameter planner, saved configuration, date boundaries, filter acknowledgement, cancellation and multi-field checks passed.');
@@ -1411,3 +1439,124 @@ assert.deepEqual(projectionTrial.availableFields(),['Tenant'],'scalar results mu
 projectionTrial.update({metadata:{columns:[{displayName:'Foreign',roles:{fields:true},expr:{source:{entity:'Other'},ref:'Foreign'}}]},table:{columns:[],rows:[]}});
 assert.deepEqual(projectionTrial.availableFields(),[],'an actual foreign binding still quarantines old fields');
 projectionTrial.destroy();
+
+// Conversational wrappers are ignored after entity recognition, never meaningful operators.
+{
+ const expected=plan('Rent Measure by City for June 2024');
+ for(const q of ['what is thee Rent Measure by City for June 2024','what Rent Measure by City for June 2024','what is the Rent Measure of City in June 2024','what are the Rent Measure by City for June 2024?','please show Rent Measure as City in June 2024','I would like to know the Rent Measure of City for June 2024']){
+  const actual=plan(q);assert.deepEqual(actual.measures,expected.measures);assert.deepEqual(actual.groups,expected.groups);assert.deepEqual(actual.filters,expected.filters);
+ }
+ const glConfig={...config,options:[...config.options,'GL'],fields:[...config.fields,{name:'GL',table:'Ledger',column:'GL',type:'text',values:['2575']}]};
+ const explicit=planParameterQuestion('what is the Rent Measure by City GL (2575)',glConfig,['Rent Measure']);assert(explicit.filters.some(f=>f.target.column==='GL'&&f.values.includes('2575')));
+ for(const q of ['Rent Measure by City not GL (2575)','Rent Measure by City unknown business rule'])assert.throws(()=>planParameterQuestion(q,glConfig,['Rent Measure']),/Could not safely interpret/);
+ console.log('Conversational wrappers and general GL numeric-value filters passed; meaningful unknown instructions remain guarded.');
+}
+
+
+// Exact reported grouping label and preservation of literal filler-like values.
+{
+ const c={...config,options:[...config.options,'Assigned Sales Category'],fields:[...config.fields,{name:'Assigned Sales Category',table:'Retail',column:'Assigned Sales Category',type:'text',values:[]}]};
+ const expected=planParameterQuestion('show Rent Measure by Assigned Sales Category for June 2024',c,['Rent Measure']);
+ for(const text of ['what is thee Rent Measure by Assigned Sales Category for June 2024','what Rent Measure by Assigned Sales Category for June 2024']){
+  const actual=planParameterQuestion(text,c,['Rent Measure']);assert.deepEqual(actual.groups,expected.groups);assert.deepEqual(actual.measures,expected.measures);assert.deepEqual(actual.filters,expected.filters);
+ }
+ for(const value of ['thee','what']){const actual=planParameterQuestion('Show Rent Measure where Assigned Sales Category = "'+value+'"',c,['Rent Measure']);assert(actual.filters.some(f=>f.values?.includes(value)));}
+ assert.throws(()=>planParameterQuestion('what Rent Measure excluding Assigned Sales Category for June 2024',c,['Rent Measure']),/Could not safely interpret/);
+}
+
+
+// Aging changes only value/date predicates while keeping the projection selected.
+{
+ const calls=[];const trial=Object.create(FieldParameterTrial.prototype);
+ const selector={target:{table:'Parameter',column:'Parameter'},operator:'In',values:['Customer']};
+ const old={target:{table:'Data',column:'Due'},logicalOperator:'And',conditions:[{operator:'LessThan',value:'2026-01-01'}]};
+ const next={...old,conditions:[{operator:'LessThan',value:'2026-02-01'}]};
+ Object.assign(trial,{pending:{plan:{agingQuery:true},filters:[selector,next]},requestConfig:{table:'Parameter',column:'Parameter'},appliedFilters:[selector,old],host:{applyJsonFilter(...args){calls.push(args);}},trace(){}});
+ trial.clearPendingFilters();clearTimeout(trial.recoveryTimer);
+ assert.deepEqual(calls[0][0],[old]);assert.equal(calls[0][3],1);assert.deepEqual(trial.pending.retainedSelectors,[selector]);
+ trial.pending.filters=[{...selector,values:['Other']},next];trial.clearPendingFilters();clearTimeout(trial.recoveryTimer);assert.equal(calls.at(-1)[0],null,'changed projection uses full reset');
+}
+
+// A measure-only switch must keep the selected field active throughout the request.
+{
+ const config = {table:'MallUnits 2', column:'MallUnits', fields:[], options:['Unit'],
+   measureParameter:{table:'Map Measures.', column:'Map Measures.', options:['Total Area','Earliest Lease Expiry']}};
+ const plan = {groups:['Unit'], measures:['Earliest Lease Expiry'], filters:[], summary:[]};
+ const earlier = parameterFilters({...plan, measures:['Total Area']}, config);
+ const trial = Object.create(FieldParameterTrial.prototype);
+ const actions = [];
+ Object.assign(trial, {appliedFilters:earlier, status:{}, trace(){}, cancel(){}, matches(){return false;},
+   parameterLabelError(){}, sendPending(){actions.push('apply');this.pending.resolve({});},
+   clearPendingFilters(){actions.push('clear');this.pending.resolve({});}});
+ trial.requestBase(plan, config, true);
+ clearTimeout(trial.timer);
+ assert.deepEqual(actions,['apply']);
+ assert.deepEqual(trial.pending.filters.map(filter=>filter.values),[['Unit'],['Earliest Lease Expiry']]);
+}
+
+// The 9.8 sender refreshes an identical submitted filter batch.
+{
+ const filters=[{target:{table:'MallUnits 2',column:'MallUnits'},operator:'In',values:['Unit']}];
+ const trial=Object.create(FieldParameterTrial.prototype), actions=[];
+ Object.assign(trial,{appliedFilters:filters, pending:{plan:{},filters}, latest:{}, recoveredRequest:true,
+   host:{refreshHostData(){actions.push('refresh');},applyJsonFilter(){actions.push('apply');}},trace(){}});
+ trial.sendPending();assert.deepEqual(actions,['refresh']);
+}
+
+// With no slicer and no host acknowledgement, submit both parameter choices together.
+{
+ const calls=[];
+ const trial=Object.create(FieldParameterTrial.prototype);
+ const config={table:'MallUnits 2',column:'MallUnits',options:['Unit','Assigned Tenant Name'],fields:[],
+   measureParameter:{table:'Map Measures.',column:'Map Measures.',options:['Total Area','Earliest Lease Expiry']}};
+ const plan={groups:['Unit'],measures:['Earliest Lease Expiry'],filters:[],summary:[]};
+ Object.assign(trial,{pending:{plan,filters:parameterFilters(plan,config)},appliedFilters:[],recoveredRequest:true,
+   host:{applyJsonFilter(...args){calls.push(args);}},trace(){}});
+ trial.sendPending();
+ assert.equal(calls.length,1);
+ assert.deepEqual(calls[0].slice(1,3),['parameterTrial','filter']);
+ assert.deepEqual(calls[0][0].map(f=>[f.target.table,f.target.column,f.values]),[
+   ['MallUnits 2','MallUnits',['Unit']],['Map Measures.','Map Measures.',['Earliest Lease Expiry']]]);
+ assert.equal(require('../capabilities.json').objects.parameterTrial.properties.filter.type.filter.selfFilter,true);
+}
+
+// Replay the report's native slicer projection through the real outbound filter adapter.
+{
+ const calls=[];
+ const trial=new FieldParameterTrial({prepend(){}},{applyJsonFilter(...args){calls.push(args);},persistProperties(){}});
+ const selector=(name,table,column,measure)=>({
+   displayName:name,queryName:'MallUnits.'+name,roles:measure?{measures:true}:{fields:true},isMeasure:measure,
+   sourceFieldParameters:[{displayName:column,expr:{source:{entity:table},ref:column}}]
+ });
+ const cols=[selector('Assigned Tenant Name','MallUnits 2','MallUnits',false),selector('Earliest Lease Expiry','Map Measures.','Map Measures.',true)];
+ trial.update({metadata:{columns:cols},table:{columns:cols,rows:[]}});
+ const config={table:'MallUnits 2',column:'MallUnits',options:['Assigned Tenant Name'],fields:[],
+   measureParameter:{table:'Map Measures.',column:'Map Measures.',options:['Earliest Lease Expiry']}};
+ const plan={groups:['Assigned Tenant Name'],measures:[],filters:[],summary:[]};
+ const logical=parameterFilters(plan,config);
+ trial.requestConfig=config;trial.pending={plan,filters:logical,reject(){}};trial.recoveredRequest=true;
+ trial.sendPending();
+ const wire=calls.at(-1)[0];
+ assert.deepEqual(calls.at(-1).slice(1),['parameterTrial','filter',0]);
+ assert.deepEqual(wire,logical);
+ assert.deepEqual(wire.map(f=>[f.target.table,f.target.column,f.values]),[
+   ['MallUnits 2','MallUnits',['Assigned Tenant Name']],['Map Measures.','Map Measures.',['Earliest Lease Expiry']]]);
+ let response;
+ trial.pending.resolve=answer=>{response=answer;};
+ const rows=Array.from({length:172},(_,i)=>['Tenant '+i,44000+i]);
+ trial.update({metadata:{columns:cols},table:{columns:cols,rows}},[]);
+ assert.equal(response.table.rows.length,172,'accept the narrow 172-row response without a JSON filter echo');
+ const optimization=require('../.tmp/test/calculationItemFilter').calculationItemFilter(`TREATAS({"Optimization"}, 'Calculation group'[Calculation group column])`);
+ trial.setCalculationFilter(optimization);
+ trial.applyQueryFilter(logical,0);
+ assert.deepEqual(calls.at(-1),[[...logical,optimization],'parameterTrial','filter',0]);
+ trial.applyQueryFilter(null,1);
+ assert.deepEqual(calls.at(-1),[logical,'parameterTrial','filter',1]);
+ trial.setCalculationFilter(undefined);
+ assert.deepEqual(calls.at(-1),[optimization,'parameterTrial','filter',1]);
+ const objects=require('../capabilities.json').objects;
+ const selfFilters=Object.entries(objects).flatMap(([object,definition])=>Object.entries(definition.properties)
+   .filter(([,p])=>p.type.filter?.selfFilter).map(([property])=>object+'.'+property));
+ assert.deepEqual(selfFilters,['parameterTrial.filter']);
+ trial.destroy();
+}

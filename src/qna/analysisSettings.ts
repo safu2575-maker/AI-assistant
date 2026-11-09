@@ -70,7 +70,14 @@ export function analysisSettings(current: AnalysisSettings | undefined, fields: 
         if(!chips.childElementCount)chips.textContent="None";
     };
     renderTransactions(initial?.transactionFields?.length?initial.transactionFields.slice(0,10):['']);refresh();
-    return {element,refresh,read:():AnalysisSettings=>{
+    return {element,refresh,validateSection:(section:string)=>{
+        if(section==='Transactions')ruleEditor.read();
+        if(section==='Summary cards')cardsEditor.read();
+        if(section==='Clearing details')clearingEditor.read();
+        if(section==='Document details')documentEditor.read();
+        if(section==='Explain'&&enabled.checked&&!measures.includes(measure.value))throw new Error('Choose an available analysis measure.');
+        return true;
+    },read:():AnalysisSettings=>{
         const definition:AnalysisDefinition={summaryCards:cardsEditor.read(),document:documentEditor.read(),clearing:clearingEditor.read(),transactionRule:ruleEditor.read(),consolidated:true,measure:measure.value,hierarchy:[],
             transactionFields:[...new Set(transactionFields.map(field=>field.value).filter(Boolean))],
             excludedDimensions:included.filter(item=>!item.input.checked).map(item=>item.name),

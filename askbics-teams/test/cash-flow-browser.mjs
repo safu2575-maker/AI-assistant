@@ -54,6 +54,9 @@ try{
  await page.setContent('<div id="root" class="askbics-host" style="position:relative;height:820px"></div>');await page.addStyleTag({content:await readFile('tab/visual.css','utf8')});await page.addScriptTag({content:bundle.outputFiles[0].text});
  await page.getByRole('button',{name:/^Setup/}).click();
  assert.equal(await page.getByRole('dialog',{name:'Cash-flow setup',exact:true}).isVisible(),true);
+ const mappingHelpCheck=await page.getByRole('dialog',{name:'Cash-flow setup',exact:true}).locator('label').evaluateAll(labels=>labels.filter(l=>l.querySelector('select')).map(l=>({count:l.querySelectorAll('.askbics-settings-help-icon').length,text:l.querySelector('.askbics-settings-help-icon')?.getAttribute('aria-label')})));assert.equal(mappingHelpCheck.length,17);assert.ok(mappingHelpCheck.every(h=>h.count===1&&h.text.length>70));
+ const helpMarker=page.getByRole('dialog',{name:'Cash-flow setup',exact:true}).locator('.askbics-settings-help-icon').first();await helpMarker.focus();assert.equal(await helpMarker.evaluate(e=>document.activeElement===e),true);const beforeHelp=await page.locator('select[aria-label="Company code *"]').inputValue();await helpMarker.click();assert.equal(await page.locator('select[aria-label="Company code *"]').inputValue(),beforeHelp);
+
  await page.getByRole('tab',{name:'Identity & dates',exact:true}).click();assert.equal(await page.getByRole('tabpanel',{name:'Basic mappings',exact:true}).isVisible(),false);
  await page.getByRole('tab',{name:'Clearing & references',exact:true}).click();assert.equal(await page.getByRole('tabpanel',{name:'Clearing & references',exact:true}).isVisible(),true);
  await page.getByRole('tab',{name:'Basic mappings',exact:true}).click();

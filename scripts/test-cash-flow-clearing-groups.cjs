@@ -11,7 +11,7 @@ assert.equal(result.unresolved,0);assert.equal(result.payments,100);assert.deepE
 assert.ok(result.allocations.every(a=>a.path.some(p=>p.settlementSources?.length===3)));
 assert.ok(result.allocations.every(a=>a.path.some(p=>p.settlementPaths?.length===3)));
 const table=cashFlowTable(result.allocations,{fields:{document:'document'},measure:'Amount',rules:[]});
-assert.equal(table.rows.length,1);assert.equal(table.entries[0].length,3);assert.equal(table.total([0]).at(-2),'-100.00');
+assert.equal(table.rows.length,1);assert.equal(table.entries[0].length,3);assert.equal(table.total([0])[table.columns.indexOf('Destination amount')],'-100.00');
 assert.equal(new Set(result.allocations.flatMap(a=>cashEvidence(a.path).map(cashKey))).size,rows.length);
 // Source amounts need not match individual invoices: aggregate evidence proves full settlement.
 result=run([bank,p('PAY','2','VENDOR',55,'C'),p('PAY','3','VENDOR',45,'C'),...invoices]);assert.equal(result.unresolved,0);

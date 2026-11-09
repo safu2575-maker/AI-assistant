@@ -233,7 +233,8 @@ html, body { margin: 0; width: 100%; height: 100%; }
 .askbics-qna__chart svg.has-mark-selection .askbics-qna__bar:not(.is-selected), .askbics-qna__chart svg.has-mark-selection .askbics-qna__pie-slice:not(.is-selected), .askbics-qna__chart svg.has-mark-selection .askbics-qna__point:not(.is-selected), .askbics-qna__chart svg.has-mark-selection .askbics-qna__scatter-point:not(.is-selected), .askbics-qna__chart svg.has-mark-selection .askbics-qna__treemap-tile:not(.is-selected), .askbics-qna__chart svg.has-mark-selection .askbics-qna__funnel-stage:not(.is-selected) { opacity: .5; filter: saturate(.55); }
 .askbics-qna__chart svg.has-mark-selection .askbics-qna__category-label:not(.is-selected), .askbics-qna__chart svg.has-mark-selection .askbics-qna__data-label:not(.is-selected) { opacity: .5; }
 .askbics-qna__category-label.is-related-hover, .askbics-qna__category-label.is-selected, .askbics-qna__data-label.is-related-hover, .askbics-qna__data-label.is-selected { fill: #1d4ed8 !important; font-weight: 800; filter: drop-shadow(0 0 3px rgba(255,255,255,.9)); }
-.askbics-qna__tooltip { position: absolute; z-index: 220; display: flex; flex-direction: column; gap: 1px; min-width: 0; max-width: 230px; padding: 5px 7px; border: 1px solid #d5dce6; border-radius: 8px; background: rgba(255,255,255,.98); color: #334155; font-size: 10.5px; line-height: 14px; box-shadow: 0 7px 18px rgba(15,23,42,.13); opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(3px); transition: opacity .1s ease, transform .1s ease, visibility .1s ease; }
+/* Shared help stays above cash-flow and document dialogs (z-index 1300). */
+.askbics-qna__tooltip { position: absolute; z-index: 1400; display: flex; flex-direction: column; gap: 1px; min-width: 0; max-width: 230px; padding: 5px 7px; border: 1px solid #d5dce6; border-radius: 8px; background: rgba(255,255,255,.98); color: #334155; font-size: 10.5px; line-height: 14px; box-shadow: 0 7px 18px rgba(15,23,42,.13); opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(3px); transition: opacity .1s ease, transform .1s ease, visibility .1s ease; }
 .askbics-qna__tooltip.is-visible { opacity: 1; visibility: visible; transform: translateY(0); }
 .askbics-qna__tooltip strong { font-size: 10.5px; font-weight: 600; }
 .askbics-qna__tooltip span { color: #475569; }
@@ -1266,7 +1267,7 @@ details.askbics-analysis-panel:not([open]) + details.askbics-analysis-panel:not(
 .askbics-backup-review { padding: 12px 12px 12px 28px; margin: 0; border-radius: 8px; background: #f5f8fc; overflow-wrap: anywhere; }
 .askbics-backup-review:empty { display: none; }
 .askbics-backup-review li { margin: 5px 0; }
-.askbics-backup-toast { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 300; padding: 12px 18px; border: 1px solid #bdd4f7; border-radius: 10px; background: #f0f7ff; color: #193f7f; box-shadow: 0 4px 20px #0002; }
+.askbics-backup-toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 300; padding: 12px 18px; border: 1px solid #bdd4f7; border-radius: 10px; background: #f0f7ff; color: #193f7f; box-shadow: 0 4px 20px #0002; }
 
 .askbics-transaction-fields { display: grid; gap: 12px; }
 .askbics-transaction-field-row { display: flex; align-items: flex-end; gap: 8px; }
@@ -1660,7 +1661,8 @@ details.askbics-analysis-panel:not([open]) + details.askbics-analysis-panel:not(
 .askbics-colour-error { display:block; color:#b91c1c; font-size:11px; margin:5px 0; }
 @media(max-width:620px) { .askbics-settings-sticky-toolbar { top:-16px; } }
 
-.askbics-qna__settings-panel .askbics-settings-help-icon {
+.askbics-qna__settings-panel .askbics-settings-help-icon,
+.askbics-cash-workspace .askbics-settings-help-icon {
     display: inline-flex; align-items: center; justify-content: center;
     width: 14px; height: 14px; margin-left: 5px; vertical-align: middle;
     border: 1px solid #b9c5d8; border-radius: 50%; color: #8191aa;
@@ -1699,14 +1701,16 @@ details.askbics-analysis-panel:not([open]) + details.askbics-analysis-panel:not(
 .askbics-transactions-head .askbics-investigation-breadcrumbs button:hover { background: #eaf1ff; }
 .askbics-transactions-head .askbics-investigation-breadcrumbs [aria-current="page"] { font-weight: 400; color: #63738c; }
 
-.askbics-qna__settings-panel .askbics-settings-help-caption {
+.askbics-qna__settings-panel .askbics-settings-help-caption,
+.askbics-cash-workspace .askbics-settings-help-caption {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     align-self: start;
     min-width: 0;
 }
-.askbics-qna__settings-panel .askbics-settings-help-caption .askbics-settings-help-icon {
+.askbics-qna__settings-panel .askbics-settings-help-caption .askbics-settings-help-icon,
+.askbics-cash-workspace .askbics-settings-help-caption .askbics-settings-help-icon {
     width: 12px;
     height: 12px;
     flex: 0 0 12px;
@@ -1876,7 +1880,40 @@ details.askbics-analysis-panel:not([open]) + details.askbics-analysis-panel:not(
 .askbics-aging-buckets {overflow-x:auto;}
 .askbics-aging-bucket {display:grid;grid-template-columns:minmax(100px,1fr) 70px 70px minmax(100px,1fr) 36px;gap:6px;align-items:center;margin-bottom:6px;}
 .askbics-aging-bucket input {min-width:0;width:100%;box-sizing:border-box;}
-.askbics-aging-controls {display:flex;align-items:center;gap:8px;padding:8px;}
+.askbics-aging-toolbar { flex-wrap:wrap; gap:4px; }
+.askbics-aging-toolbar > div { align-items:center; flex-wrap:wrap; }
+.askbics-aging-controls { display:flex; align-items:center; gap:3px; }
+.askbics-aging-toolbar .askbics-aging-icon { width:30px; height:30px; padding:6px; display:inline-flex; align-items:center; justify-content:center; }
+.askbics-aging-icon svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.askbics-aging-controls > .askbics-settings-select:not(.askbics-aging-calendar) { width:96px; }
+.askbics-aging-controls .askbics-settings-select__trigger { min-height:30px; box-shadow:none; }
+.askbics-aging-toolbar .askbics-aging-controls .askbics-settings-select__trigger,
+.askbics-aging-toolbar .askbics-aging-controls > .askbics-aging-icon {
+  box-sizing:border-box; min-height:26px; height:26px; padding:4px 7px;
+  border:1px solid transparent; border-radius:6px; background:transparent;
+  color:#64748b; font:600 11px "Segoe UI", Arial, sans-serif; box-shadow:none;
+}
+.askbics-aging-toolbar .askbics-aging-controls .askbics-aging-calendar > .askbics-settings-select__trigger,
+.askbics-aging-toolbar .askbics-aging-controls > .askbics-aging-icon { width:28px; padding:5px; justify-content:center; }
+.askbics-aging-controls > .askbics-settings-select:not(.askbics-aging-calendar) { width:auto; }
+.askbics-aging-toolbar .askbics-aging-controls .askbics-settings-select__trigger { gap:7px; }
+.askbics-aging-toolbar .askbics-aging-controls button:hover,
+.askbics-aging-toolbar .askbics-aging-controls .askbics-settings-select__trigger[aria-expanded="true"] {
+  border-color:#bfdbfe; background:#eff6ff; color:#1d4ed8;
+}
+.askbics-aging-controls > .askbics-aging-icon svg,
+.askbics-aging-calendar > .askbics-aging-icon svg { width:15px; height:15px; }
+
+.askbics-aging-toolbar button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+.askbics-aging-calendar__popup { box-sizing:border-box; padding:6px; overflow:auto; background:#fff; border:1px solid #d5e1f3; border-radius:12px; box-shadow:0 8px 24px #173f8526; }
+.askbics-aging-calendar__nav { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+.askbics-aging-calendar__nav strong { font-size:12px; color:#173f65; }
+.askbics-aging-calendar__grid { display:grid; grid-template-columns:repeat(7,1fr); gap:1px; }
+.askbics-aging-calendar__grid > span { text-align:center; font-size:11px; color:#64748b; padding:3px 0; }
+.askbics-aging-toolbar .askbics-aging-calendar__grid button { min-height:24px; height:24px; padding:2px; font-size:11px; }
+.askbics-aging-toolbar .askbics-aging-calendar__nav .askbics-aging-icon { width:26px; height:26px; padding:5px; }
+.askbics-aging-toolbar .askbics-aging-calendar__grid button[aria-pressed="true"] { background:#2563eb; color:#fff; border-color:#2563eb; }
+
 /* Aligned aging editor: captions share a baseline and controls have equal height. */
 .askbics-aging-editor { margin-top:12px; align-items:stretch; gap:14px 12px; }
 .askbics-aging-control { display:flex; flex-direction:column; justify-content:flex-end; gap:6px; min-width:0; }
@@ -2031,5 +2068,352 @@ details.askbics-analysis-panel:not([open]) + details.askbics-analysis-panel:not(
 
 .askbics-cash-workspace [hidden] { display:none !important; }
 
-.askbics-cash-workspace > .askbics-cash-loading { position:absolute; bottom:16px; left:50%; transform:translateX(-50%); z-index:2; max-width:calc(100% - 32px); pointer-events:none; }
+.askbics-cash-workspace > .askbics-cash-loading { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:2; max-width:calc(100% - 32px); pointer-events:none; }
 .askbics-cash-loading[hidden] { display:none; }
+
+/* Native text copying in every shared answer table, including matrices/popups. */
+.askbics-qna__table th, .askbics-qna__table td, .askbics-qna__table .askbics-qna__cell-value { user-select: text !important; -webkit-user-select: text !important; }
+
+// Shared semantic badges: text remains part of the table/export value.
+.askbics-status-badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font: 600 11px/1.4 "Segoe UI", Arial, sans-serif; white-space: normal; }
+.askbics-status-badge.is-verified { background: #ecfdf5; color: #166534; }
+.askbics-status-badge.is-estimated { background: #fffbeb; color: #92400e; }
+.askbics-status-badge.is-unresolved { background: #fff7ed; color: #9a3412; }
+.askbics-status-badge.is-error { background: #fef2f2; color: #991b1b; }
+.askbics-status-badge.is-pending { background: #f1f5f9; color: #475569; }
+
+.askbics-document-group td { background: #eef4ff; height: 32px; padding: 0 10px; }
+.askbics-document-group button { border: 0; background: transparent; color: #1e3a5f; font: 600 12px/1.4 "Segoe UI", Arial, sans-serif; cursor: pointer; }
+.askbics-cash-grouped-entries .askbics-qna__table-wrap { max-height: 55vh; }
+.askbics-cash-grouped-entries .askbics-qna__table tbody tr.askbics-qna__table-total td { position: static; box-shadow: none; }
+
+.askbics-cash-entries { height: 90%; }
+.askbics-cash-accounting-body { display:flex; flex:1; flex-direction:column; gap:10px; min-height:0; overflow:hidden; }
+.askbics-cash-compact-summary { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; flex-shrink:0; }
+.askbics-cash-compact-summary > small { flex-basis:100%; color:#526178; font-size:11px; }
+.askbics-cash-compact-summary > button { margin-left:auto; }
+.askbics-cash-document-content { display:flex; flex:1; flex-direction:column; min-height:0; }
+.askbics-cash-document-content > h3, .askbics-cash-document-content > p { flex-shrink:0; margin:0 0 8px; }
+.askbics-cash-document-content .askbics-cash-grouped-entries { display:flex; flex-direction:column; min-height:0; max-width:100%; }
+.askbics-cash-document-content .askbics-qna__table-wrap { flex:1; min-height:0; max-height:none; overflow:auto; }
+.askbics-cash-document-content .askbics-qna__table-toolbar { flex-shrink:0; }
+.askbics-document-group td > small { display:block; font:10px/12px "Segoe UI",Arial,sans-serif; color:#526178; }
+.askbics-document-group button { font-size:11px; line-height:14px; }
+// Calculation groups reuse settings controls; only the editor layout is specialized.
+.askbics-calculation-groups {
+  display: flex; flex-direction: column; gap: 12px; min-width: 0; width: 100%;
+  > p { grid-column: 1 / -1; }
+  .askbics-calculation-sidebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; border-bottom: 1px solid #dce5f3; padding-bottom: 12px; }
+  .askbics-calculation-sidebar > input { flex: 1 1 180px; width: auto; }
+  .askbics-calculation-group-list { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+  .askbics-calculation-group-list > div { display: flex; align-items: center; min-width: 0; max-width: 100%; border: 1px solid #dce5f3; padding: 6px 8px; gap: 8px; border-radius: 8px; }
+  .askbics-calculation-group-list > .is-drop-target { outline: 1px solid #b8caff; background: #eaf1ff; }
+  .askbics-calculation-group-list .is-drag-handle { flex: none; }
+  .askbics-calculation-group-list button { text-align: left; overflow-wrap: anywhere; }
+  .askbics-calculation-group-list [aria-pressed=true] { background: #eaf1ff; border-color: #b8caff; color: #2457e5; }
+  .askbics-calculation-group-caption { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .askbics-calculation-group-caption strong { display: block; font-size: 13px; }
+  .askbics-calculation-sidebar small { display: block; color: #64748b; font-size: 11px; }
+  .askbics-calculation-editor { min-width: 0; width: 100%; }
+  .askbics-calculation-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .askbics-calculation-heading small { color: #64748b; white-space: nowrap; }
+  .askbics-calculation-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .askbics-calculation-actions .askbics-settings-action { margin: 0; padding: 5px 9px; min-height: 30px; }
+  .askbics-calculation-card > summary { display: flex; align-items: center; gap: 6px; }
+  .askbics-calculation-card > summary::before { content: '›'; color: #526781; }
+  .askbics-calculation-card[open] > summary::before { transform: rotate(90deg); }
+  .askbics-calculation-card > summary > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .askbics-calculation-card-actions { display: inline-flex; align-items: center; flex: none; gap: 2px; }
+  .askbics-calculation-card-actions .askbics-settings-action { margin: 0; min-height: 28px; padding: 4px 6px; font-size: 12px; }
+  .askbics-calculation-card.is-drop-target { outline: 1px solid #93b4f5; }
+  .askbics-calculation-options-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,170px),1fr)); gap: 0 12px; }
+  .askbics-calculation-options-grid .is-wide { grid-column: 1 / -1; }
+  .askbics-calculation-options { background: #fafcff; }
+  .askbics-calculation-options > summary { font-size: 12px; font-weight: 400; color: #526781; }
+  .askbics-calculation-preview { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+  [hidden] { display: none !important; }
+  label { display: block; margin: 8px 0; }
+  label > span { display: block; margin-bottom: 5px; }
+  input:not([type=checkbox]), textarea { width: 100%; box-sizing: border-box; border: 1px solid #ccd9ee; border-radius: 7px; padding: 8px; font: inherit; color: inherit; background: #fff; }
+  details { border: 1px solid #dce5f3; border-radius: 8px; margin-top: 12px; padding: 10px; }
+  summary { cursor: pointer; font-weight: 600; }
+  .askbics-settings-action { margin: 3px; }
+  .askbics-calculation-code textarea, .askbics-calculation-highlight { font: 12px/1.6 Consolas, monospace; tab-size: 4; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .askbics-calculation-highlight { border: 1px solid #dce5f3; border-radius: 7px; padding: 8px; background: #f7f9fc; max-height: 180px; overflow: auto; }
+  .calc-token-string { color: #166534; } .calc-token-field, .calc-token-reference { color: #1d4ed8; }
+  .calc-token-number { color: #7c3aed; } .calc-token-comment { color: #64748b; }
+  .askbics-calculation-suggestions:empty { display: none; }
+  .askbics-calculation-completion { position: relative; min-width: 0; }
+  .askbics-calculation-suggestions { position: absolute; top: 100%; left: 0; z-index: 20; width: 360px; max-width: 100%; max-height: 164px; box-sizing: border-box; padding: 4px; overflow-y: auto; overflow-x: hidden; border: 1px solid #dce5f3; background: white; border-radius: 7px; box-shadow: 0 6px 18px rgba(30,50,80,.14); }
+  .askbics-calculation-suggestions-head { position: sticky; top: -4px; display: flex; align-items: center; justify-content: space-between; padding: 0 4px 4px 8px; background: white; color: #637491; font-size: 12px; z-index: 1; }
+  .askbics-calculation-suggestions .askbics-calculation-suggestions-head button.askbics-settings-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; min-width: 28px; height: 28px; padding: 5px; text-align: center; }
+  .askbics-calculation-suggestions button.askbics-settings-action { display: block; box-sizing: border-box; width: 100%; min-height: 28px; height: 28px; margin: 0; padding: 4px 8px; border: 0; border-radius: 4px; text-align: left; font: 12px/20px "Segoe UI", sans-serif; color: #24324b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; }
+  .askbics-calculation-suggestions button.askbics-settings-action:hover, .askbics-calculation-suggestions button[aria-selected=true] { background: #eaf1ff; color: #2457e5; }
+
+}
+
+.askbics-calculation-groups .calc-token-match { background: #dbeafe; outline: 1px solid #2563eb; border-radius: 2px; }
+@media (max-width: 600px) { .askbics-calculation-groups { grid-template-columns: minmax(0, 1fr); } .askbics-calculation-groups .askbics-calculation-sidebar { border-right: 0; border-bottom: 1px solid #dce5f3; padding-bottom: 8px; } }
+
+
+// Calculation workspaces share the settings tabs and action icons.
+.askbics-calculation-groups {
+  .askbics-calculation-heading > strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .askbics-settings-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; position: static; }
+  .askbics-calculation-card { border: 0; padding: 0; margin-top: 8px; }
+  .askbics-calculation-defaults { font-size: 12px; color: #64748b; margin: 6px 0; }
+  [role=tabpanel] { min-width: 0; }
+  .askbics-calculation-group-caption small { display: block; font-size: 11px; color: #64748b; }
+}
+
+.askbics-calculation-groups .askbics-calculation-heading { position: relative; }
+.askbics-calculation-groups .askbics-calculation-group-menu { position: absolute; top: 100%; right: 0; left: auto; z-index: 30; background: #fff; border: 1px solid #dce5f3; }
+
+.askbics-calculation-groups .askbics-calculation-formula-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.askbics-calculation-editor {
+  container-type: inline-size;
+  .askbics-calculation-compact-list { box-sizing: border-box; min-width: 0; gap: 0; border: 1px solid #dce5f3; border-radius: 10px; }
+  .askbics-calculation-compact-list > div { box-sizing: border-box; border: 0; border-bottom: 1px solid #edf1f7; border-radius: 0; padding: 12px; }
+  .askbics-calculation-compact-list > div:last-child { border-bottom: 0; }
+  .askbics-calculation-compact-list > .is-selected { background: #f2f6ff; }
+  .askbics-calculation-card { margin-top: 16px; padding: 16px; border: 1px solid #cbdcf7; border-radius: 10px; background: #fbfdff; }
+  .askbics-calculation-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+  .askbics-calculation-fields > label { min-width: 0; }
+  .askbics-calculation-advanced { margin-top: 12px; }
+}
+@container (max-width: 340px) {
+  .is-editing-calculation .askbics-calculation-compact-list { display: none; }
+  .askbics-calculation-editor .askbics-calculation-fields { grid-template-columns: minmax(0,1fr); }
+}
+.askbics-calculation-groups .askbics-calculation-done { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+.askbics-calculation-groups {
+  .askbics-calculation-workspace-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .askbics-calculation-workspace-tools > input { flex: 1; min-width: 0; }
+  .askbics-calculation-workspace-tools > button { flex-shrink: 0; margin: 0; }
+  .askbics-calculation-switcher { gap: 6px; }
+  .askbics-calculation-switcher button[aria-pressed=true] { background: #eaf1ff; border-color: #b8caff; color: #2457e5; }
+  .askbics-calculation-list-row { position: relative; padding: 10px 8px; }
+  .askbics-calculation-empty { color: #64748b; font-size: 12px; }
+}
+
+.askbics-calculation-suggestions .askbics-completion-kind { display: inline-block; width: 20px; margin-right: 6px; color: #2457e5; font-weight: 600; text-align: center; }
+
+.askbics-calculation-code textarea[aria-invalid=true] { border-color: #c52a32; }
+.askbics-calculation-diagnostic.is-error { color: #b4232c; }
+.askbics-formula-surface { position: relative; min-width: 0; }
+.askbics-formula-surface .askbics-formula-underline { max-width: 100%; }
+.askbics-formula-underline { position: absolute; top: 0; left: 0; margin: 0; border-style: solid; border-color: transparent; color: transparent; background: transparent; white-space: pre-wrap; overflow-wrap: break-word; overflow: hidden; pointer-events: none; }
+.askbics-formula-underline mark { color: transparent; background: transparent; text-decoration: underline wavy #c52a32; text-underline-offset: 3px; }
+
+
+// Group names are the only primary navigation in Calculation Groups.
+.askbics-calculation-groups {
+ .askbics-calculation-heading { flex-wrap: wrap; }
+ .askbics-calculation-group-settings { padding: 12px; margin-bottom: 12px; border: 1px solid #dce5f3; border-radius: 10px; background: #fbfdff; }
+ .askbics-calculation-switcher .is-drag-handle { margin-right: -6px; }
+ .askbics-calculation-switcher .is-drop-target { outline: 2px solid #93b4f5; }
+}
+
+// Calculation action menus use the shared compact vertical dropdown layout.
+.askbics-calculation-groups .askbics-calculation-group-menu {
+  min-width: 180px; padding: 4px; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(30, 50, 80, .16);
+  display: flex; flex-direction: column; gap: 2px;
+  > button.askbics-settings-action {
+    display: flex; align-items: center; justify-content: flex-start; gap: 8px;
+    width: 100%; min-width: 0; height: 32px; padding: 6px 10px;
+    border: 0; border-radius: 5px; background: transparent; white-space: nowrap;
+    text-align: left; box-shadow: none;
+    &:hover, &:focus-visible { background: #eaf1ff; }
+    > span { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; }
+    svg { width: 16px; height: 16px; }
+  }
+}
+.askbics-calculation-groups .askbics-calculation-group-menu[hidden] { display: none; }
+
+// Keep calculation options compact at ordinary settings-panel widths.
+.askbics-calculation-groups .askbics-calculation-card {
+  padding: 10px; margin-top: 8px;
+  label { margin: 5px 0; }
+  .askbics-calculation-fields { gap: 6px 10px; }
+  .askbics-calculation-fields > label { margin: 0; }
+  .askbics-calculation-fields > .is-wide { grid-column: 1 / -1; }
+  .askbics-calculation-fields input:not([type=checkbox]),
+  .askbics-calculation-fields .askbics-settings-select__trigger { min-height: 32px; padding: 6px 8px; }
+  .askbics-calculation-options { padding: 8px; margin-top: 8px; }
+  .askbics-calculation-options[open] > summary { margin-bottom: 8px; }
+  .askbics-calculation-defaults { margin: 4px 0; }
+  .askbics-calculation-diagnostic { margin: 4px 0; font-size: 12px; }
+  .askbics-calculation-formula-actions { justify-content: flex-end; margin: 4px 0; }
+  .askbics-calculation-formula-actions > button { min-height: 28px; padding: 3px 8px; font-size: 12px; }
+}
+
+// Names-first KPI table inside each calculation group.
+.askbics-calculation-groups {
+ .askbics-calculation-workspace-tools { justify-content: flex-end; }
+ .askbics-calculation-kpi-add { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+ .askbics-calculation-kpi-add > input { flex: 1; min-width: 0; }
+ .askbics-calculation-kpi-add > button { flex: none; margin: 0; min-height: 32px; }
+ .askbics-calculation-kpi-list { overflow: visible; }
+ .askbics-calculation-kpi-list table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+ .askbics-calculation-kpi-list th { background: #f5f8fd; color: #526781; font-weight: 600; text-align: left; }
+ .askbics-calculation-kpi-list th, .askbics-calculation-kpi-list td { padding: 8px; border-bottom: 1px solid #e5ebf5; vertical-align: middle; }
+ .askbics-calculation-kpi-list th:nth-child(2) { width: 72px; }
+ .askbics-calculation-kpi-list th:last-child { width: 72px; text-align: right; }
+ .askbics-calculation-kpi-list tr:last-child td { border-bottom: 0; }
+ .askbics-calculation-kpi-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+ .askbics-calculation-kpi-name strong { overflow-wrap: anywhere; font-weight: 500; }
+ .askbics-calculation-kpi-actions { position: relative; text-align: right; white-space: nowrap; }
+ .askbics-calculation-kpi-actions > button { margin: 0 0 0 4px; width: 28px; height: 28px; min-height: 28px; padding: 5px; }
+ .askbics-calculation-kpi-status { display: inline-block; border-radius: 12px; padding: 3px 7px; font-size: 11px; background: #fff2df; color: #8a5a0a; }
+ .askbics-calculation-kpi-status.is-defined { background: #e8f8ef; color: #197348; }
+ .askbics-calculation-kpi-list .is-drag-handle { flex: 0 0 20px; width: 20px; min-width: 20px; padding: 2px; }
+}
+
+.askbics-qna td.has-calculation-details { position: relative; }
+.askbics-calculation-detail-action { position: absolute; right: 2px; top: 2px; width: 22px; height: 20px; padding: 0; border: 1px solid #d5dce6; border-radius: 5px; color: #2457e5; background: #fff; opacity: 0; cursor: pointer; }
+.has-calculation-details:hover .askbics-calculation-detail-action, .has-calculation-details:focus-within .askbics-calculation-detail-action { opacity: 1; }
+.askbics-calculation-detail-panel { width: min(620px,94%); max-height: 88%; }
+.askbics-calculation-detail-evidence { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 Consolas,monospace; margin: 0; user-select: text; }
+
+// Labelled calculation menu actions share the global outline icon language.
+.askbics-calculation-groups .askbics-calculation-group-menu {
+ min-width: 168px;
+ > button.askbics-settings-menu-item {
+  box-sizing: border-box; min-height: 32px; height: 32px; margin: 0;
+  padding: 6px 10px; line-height: 20px; font-size: 12px;
+  > span { display: inline-flex; align-items: center; justify-content: center; }
+  &.is-delete { color: #b4232c; }
+  &.is-delete:hover, &.is-delete:focus-visible { background: #fff1f2; }
+ }
+}
+
+// KPI entry uses the full available width beside Add KPI.
+.askbics-calculation-groups .askbics-calculation-kpi-add {
+ display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; margin: 8px 0 12px;
+}
+
+// Quiet, borderless navigation/actions in Calculation Groups.
+.askbics-calculation-groups button.askbics-settings-icon:not(.is-drag-handle) {
+ display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+ box-sizing: border-box; width: 28px; min-width: 28px; height: 28px; min-height: 28px;
+ margin: 0; padding: 6px; border: 0; border-radius: 50%; background: transparent; box-shadow: none; color: #526781;
+ > span { display: inline-flex; align-items: center; justify-content: center; }
+ svg { width: 15px; height: 15px; }
+ &:hover:not(:disabled) { background: #eaf1ff; color: #2457e5; box-shadow: none; }
+ &:focus-visible { outline: 2px solid #2457e5; outline-offset: 1px; }
+}
+.askbics-calculation-groups button.askbics-calculation-back {
+ display: inline-flex; align-items: center; gap: 5px; width: auto; min-width: 0; min-height: 28px; margin: 0; padding: 3px 0;
+ border: 0; background: transparent; box-shadow: none; color: #526781; font-size: 12px;
+ > span { display: inline-flex; }
+ svg { width: 15px; height: 15px; }
+ &:hover:not(:disabled) { background: transparent; color: #2457e5; text-decoration: underline; }
+ &:focus-visible { outline: 2px solid #2457e5; outline-offset: 2px; }
+}
+
+// Compact connected group tabs; the whole tab is the reorder target.
+.askbics-calculation-groups .askbics-calculation-switcher {
+ display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 0; max-width: 100%;
+ padding: 0; margin: 0 0 12px; border-bottom: 1px solid #cbd9ee; overflow-x: auto;
+ > button[role=tab] {
+  flex: 0 0 auto; box-sizing: border-box; min-width: 0; max-width: 180px; height: 28px; min-height: 28px;
+  margin: 0; padding: 3px 9px; border: 1px solid #dce5f3; border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0; background: #f7f9fc; box-shadow: none; color: #526781;
+  font-size: 12px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: grab; user-select: none; touch-action: pan-y;
+  + button[role=tab] { margin-left: -1px; }
+  &[aria-selected=true] { position: relative; background: #eaf1ff; color: #2457e5; border-color: #b8caff; border-bottom-color: #2457e5; }
+  &:hover { background: #eef4ff; }
+  &:focus-visible { outline: 2px solid #2457e5; outline-offset: -3px; }
+  &.is-dragging { cursor: grabbing; opacity: .65; }
+  &.is-drop-target { outline: none; box-shadow: inset 3px 0 #2457e5; }
+ }
+}
+
+// KPI row preview and direct access to the existing calculation options.
+.askbics-calculation-kpi-list {
+ th:nth-child(2) { width: 46px; text-align: center; }
+ th:nth-child(3) { width: 72px; }
+ .askbics-calculation-kpi-options { text-align: center; }
+ .askbics-calculation-kpi-text { min-width: 0; flex: 1; }
+ .askbics-calculation-kpi-formula {
+  margin-top: 3px; color: #738198; font-size: 11px; line-height: 16px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400;
+ }
+}
+
+.askbics-calculation-kpi-list {
+ .is-drag-handle { cursor: grab; touch-action: none; }
+ tr.is-dragging { position: relative; z-index: 2; pointer-events: none; opacity: .85; box-shadow: 0 4px 12px #203b6326; }
+ tr.is-dragging td { background: #eef4ff; }
+ tr.is-dragging .is-drag-handle { cursor: grabbing; }
+ tr.is-drop-target td { box-shadow: inset 0 -2px #2457e5; background: #f5f8ff; }
+}
+
+.askbics-calculation-kpi-list tr.is-drop-target.is-drop-before td { box-shadow: inset 0 2px #2457e5; }
+
+/* Render formula syntax in the editor itself, sharing textarea geometry. */
+.askbics-calculation-groups .askbics-formula-surface .askbics-calculation-highlight {
+ position: absolute; inset: 0; margin: 0; max-height: none; border-color: transparent;
+ background: transparent; color: #24364b; overflow: hidden; pointer-events: none;
+ white-space: pre-wrap; overflow-wrap: break-word;
+}
+.askbics-calculation-groups .askbics-formula-surface textarea {
+ position: relative; background: transparent; color: transparent; caret-color: #24364b;
+}
+
+.askbics-calculation-groups .askbics-formula-surface .askbics-calculation-highlight { max-width: 100%; }
+
+/* Keep a useful multiline editing area without widening the settings panel. */
+.askbics-calculation-groups .askbics-formula-surface textarea {
+  display: block; min-height: 190px; resize: vertical;
+}
+
+
+/* Reopen the compact starting scope after a successful cash-flow run. */
+.askbics-cash-options > summary { cursor:pointer; padding:10px 0; font-weight:600; overflow-wrap:anywhere; }
+
+/* Light cash-flow entries layout: retain the shared table and one scroll owner. */
+.askbics-cash-workspace:has(> .askbics-cash-entries-overlay) > .askbics-cash-body { overflow:hidden; }
+.askbics-cash-entries > header { flex-shrink:0; }
+.askbics-cash-entries > .askbics-cash-accounting-body {
+ display:flex; flex:1 1 0; min-height:0; overflow:hidden; padding:10px 14px; gap:8px;
+}
+.askbics-cash-entries .askbics-cash-compact-summary { margin:0; gap:4px 8px; }
+.askbics-cash-entries .askbics-cash-accounting-body > .askbics-cash-actions { flex:0 0 auto; margin:0; gap:8px; }
+.askbics-cash-entries .askbics-cash-document-content { flex:1 1 0; min-height:0; min-width:0; overflow:hidden; }
+.askbics-cash-entries .askbics-cash-document-content > .askbics-cash-grouped-entries {
+ width:100%; max-width:100%; flex:1 1 0; align-self:stretch; min-height:0; margin:0; overflow:hidden;
+}
+.askbics-cash-entries .askbics-cash-grouped-entries .askbics-qna__table { min-width:100%; }
+.askbics-cash-entries .askbics-cash-grouped-entries .askbics-qna__table-wrap { flex:1 1 0; min-height:0; max-height:none; overflow:auto; overscroll-behavior:contain; }
+.askbics-cash-entries .askbics-cash-grouped-entries .askbics-qna__table-toolbar { margin:0; flex-shrink:0; }
+
+/* Cash-flow document headings only; ordinary entries and totals retain shared styles. */
+.askbics-cash-entries .askbics-cash-grouped-entries .askbics-document-group > td {
+ background:linear-gradient(90deg,#eaf3ff,#f5f9ff); border-left:3px solid #93b8eb; border-top:1px solid #d7e5f7; padding:5px 10px;
+}
+.askbics-cash-entries .askbics-cash-grouped-entries .askbics-document-group > td:has(button[aria-expanded=true]) { background:linear-gradient(90deg,#e1edff,#eff6ff); border-left-color:#5c91d8; }
+.askbics-cash-entries .askbics-cash-grouped-entries .askbics-document-group > td:hover { background:#e5effd; }
+.askbics-cash-entries .askbics-document-group button { display:flex; align-items:center; gap:7px; width:100%; min-height:28px; padding:2px 0; text-align:left; font-weight:600; color:#24466e; white-space:normal; }
+.askbics-cash-entries .askbics-document-group button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; border-radius:3px; }
+.askbics-cash-entries .askbics-document-group td > small { padding-left:21px; color:#526480; }
+.askbics-cash-entries .askbics-document-chevron { display:inline-flex; flex:0 0 14px; width:14px; height:14px; align-items:center; justify-content:center; font-size:0; }
+.askbics-cash-entries .askbics-document-chevron:before { content:''; width:6px; height:6px; border-right:1.7px solid currentColor; border-bottom:1.7px solid currentColor; transform:rotate(-45deg); }
+.askbics-cash-entries [aria-expanded=true] > .askbics-document-chevron:before { transform:rotate(45deg); }
+
+/* Compact cash-flow context; warnings remain outside disclosures. */
+.askbics-cash-run-summary { margin:8px 0; font-weight:600; }
+.askbics-cash-run-details,.askbics-cash-calculation-help { margin:6px 0 10px; }
+.askbics-cash-run-details > summary,.askbics-cash-calculation-help > summary { cursor:pointer; color:#365d8a; font-size:12px; }
+.askbics-cash-run-warning { padding:8px 10px; border-left:3px solid #d97706; background:#fff7ed; color:#92400e; }
+.askbics-cash-body > p:empty { display:none; }
+
+/* Section application stays inside the settings draft until the final save. */
+.askbics-settings-section-apply { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; padding-top:12px; border-top:1px solid #e2e8f0; }
+.askbics-settings-section-apply > span { font-size:12px; color:#476080; }
+.askbics-settings-section-apply > .is-error { color:#b42318; }
+
+.askbics-settings-section-apply[hidden], .askbics-settings-section-apply > button[hidden] { display:none; }

@@ -1,3 +1,5 @@
+import { answerTimeWindow } from './timeWindow';
+import { calculationKpis, validateCalculationGroups } from "./calculationGroups";
 import { outlineModelRows } from "./modelOutline";
 import { ModelWorkQueue } from "./modelWorkQueue";
 import { setupCatalog } from './qna/setupCatalog';
@@ -21,7 +23,7 @@ import { discoverParameter, discoverParameters, parameterMetadataColumns } from 
 import { modelHierarchy } from "./modelFeatures";
 import { readModelMatrix } from "./modelMatrix";
 import { pivotModelTable } from "./modelPivot";
-import { IFilter, IFilterColumnTarget } from "powerbi-models";
+import { BasicFilter, IFilter, IFilterColumnTarget } from "powerbi-models";
 import { categoricalAsTable, formatPowerBiValue } from "./dataAdapter";
 import { ModelSelection, QnaChartType, QnaResponse } from "./qna/types";
 import { resolveFilterTarget } from "./selectionFilter";
@@ -74,6 +76,7 @@ export class FieldParameterTrial {
     private set measures(names:string[]) { this.nativeMeasures=names; }
     public answerGroups?: () => AnswerGroup[] | undefined;
     public customKpis?: () => CustomKpi[] | undefined;
+    public calculationGroups?: () => import("./calculationGroups").CalculationGroup[] | undefined;
     public aging?: () => AgingSetup[] | undefined;
     private directMeasures: string[] = [];
     private measureBindingObserved = false;
@@ -83,10 +86,65 @@ export class FieldParameterTrial {
     public startup?: () => { enabled: boolean; fields: string[]; measure: string } | undefined;
     private startupNeeded = true;
     private boundedCashFlow = false;
-    public canFetchMoreData(): boolean { return !(this.pending ? this.pending.plan?.cashFlowRowLimit : this.boundedCashFlow) && (!this.settingsSnapshot || !!this.pending); }
+    public canFetchMoreData(): boolean { return (!this.awaitingDefaultField || !!this.pending) && !(this.pending ? this.pending.plan?.cashFlowRowLimit : this.boundedCashFlow) && (!this.settingsSnapshot || !!this.pending); }
+    private awaitingDefaultField?: string;
+    private cancelledSubmission = false;
+    private calculationFilter?: IFilter;
+    private submittedQueryFilters: IFilter[] = [];
+
+    public setCalculationFilter(filter?: IFilter): void {
+        const previous = this.calculationFilter;
+        this.calculationFilter = filter;
+        if (previous && (!filter || filterSignature({target: previous.target}) !== filterSignature({target: filter.target}))) {
+            this.host.applyJsonFilter(previous, "parameterTrial", "filter", powerbi.FilterAction.remove);
+        }
+        if (filter) this.applyQueryFilter(this.submittedQueryFilters, powerbi.FilterAction.merge);
+        this.queryCache.clear();
+        this.completed = undefined;
+        this.confirmedView = undefined;
+    }
+
+    private applyQueryFilter(filters: IFilter | IFilter[], action: powerbi.FilterAction): void {
+        const list = filters ? (Array.isArray(filters) ? filters : [filters]) : [];
+        if (action === powerbi.FilterAction.merge) {
+            const prior = this.submittedQueryFilters || [];
+            const targets = new Set(list.map(f => filterSignature({target: f.target})));
+            this.submittedQueryFilters = [...prior.filter(f => !targets.has(filterSignature({target:f.target}))), ...list];
+            const payload = this.calculationFilter ? [...list, this.calculationFilter] : filters;
+            this.host.applyJsonFilter(payload, "parameterTrial", "filter", action);
+        } else {
+            const removed = list.length ? list : this.submittedQueryFilters || [];
+            if (filters || !this.calculationFilter || removed.length)
+                this.host.applyJsonFilter(filters || (this.calculationFilter ? removed : null as unknown as IFilter), "parameterTrial", "filter", action);
+            const targets = new Set(removed.map(f => filterSignature({target:f.target})));
+            this.submittedQueryFilters = (this.submittedQueryFilters || []).filter(f => !targets.has(filterSignature({target:f.target})));
+        }
+    }
+    private applyDefaultField(): boolean {
+        const options = this.groupingOptions();
+        const field = options.includes("Assigned Group") ? "Assigned Group" : options[0];
+        const target = { table: this.table.value.trim(), column: this.column.value.trim() };
+        if (!field || this.confirmedFieldSource !== JSON.stringify([target.table, target.column])) return false;
+        const filter = new BasicFilter(target, "In", [field]).toJSON();
+        this.awaitingDefaultField = field;
+        this.applyQueryFilter(filter, powerbi.FilterAction.merge);
+        this.appliedFilters = [filter];
+        return true;
+    }
     public runStartup = (): void => {
         const setup = this.startup?.();
-        if (this.settingsSnapshot || !this.startupNeeded || !setup?.enabled || this.pending || this.loadingSuggestionValues || !this.latest || !this.automaticEnabled()) return;
+        if (this.settingsSnapshot || !this.startupNeeded || this.pending || this.loadingSuggestionValues || !this.latest) return;
+        if (!setup?.enabled || !this.automaticEnabled() || !setup.fields.length) {
+            if (!this.confirmedFieldSource) return;
+            const target = { table: this.table.value.trim(), column: this.column.value.trim() };
+            const selected = this.latestFilters.some(filter => {
+                const basic = filter as IFilter & { operator?: string; values?: unknown[] };
+                return filterSignature({ target: basic.target }) === filterSignature({ target }) &&
+                    basic.operator !== "All" && (basic.operator !== "In" || !!basic.values?.length);
+            });
+            if (selected || this.applyDefaultField()) this.startupNeeded = false;
+            return;
+        }
         this.startupNeeded = false;
         try {
             const config = this.readConfig();
@@ -101,15 +159,29 @@ export class FieldParameterTrial {
     private discardSavedValues = false;
     public clearAndReload = async (): Promise<string> => {
         this.cancelQuestion();
+        const previousView = this.latest;
         this.queryCache.clear(); this.completed = undefined; this.latest = undefined;
         // Clear dictionaries, not the schema already confirmed by Power BI.
         this.learnedFields.forEach((field,name)=>this.learnedFields.set(name,{...field,values:[]}));
         this.suggestionFieldsLoaded.clear(); this.discardSavedValues = true;
         this.startupNeeded = false; this.onDataContextChanged?.();
         const setup = this.startup?.();
-        if (!setup?.enabled || !this.automaticEnabled()) {
+        if (!setup?.enabled || !this.automaticEnabled() || !setup.fields.length) {
+            this.dataRequestsStopped = false;
+            const previous = this.appliedFilters;
+            if (this.applyDefaultField()) {
+                const current = this.appliedFilters[0];
+                const stale = previous.filter(filter => filterSignature({ target: filter.target }) !== filterSignature({ target: current.target }));
+                if (stale.length) this.applyQueryFilter(stale, powerbi.FilterAction.remove);
+
+                return "Cache cleared. Default field requested.";
+            }
+            if (this.hasParameterContext || this.confirmedFieldSource || !previousView || !parameterMetadataColumns(previousView).length) {
+                this.startupNeeded = true;
+                return "Waiting for field parameter metadata.";
+            }
             this.appliedFilters = [];
-            this.host.applyJsonFilter(null as unknown as IFilter, "parameterTrial", "filter", powerbi.FilterAction.remove);
+            this.applyQueryFilter(null as unknown as IFilter, powerbi.FilterAction.remove);
             this.host.refreshHostData();
             return "Cache cleared. Fresh Power BI data requested.";
         }
@@ -123,12 +195,6 @@ export class FieldParameterTrial {
             this.startupLoading = true;
             await this.request({groups:setup.fields, measures:[setup.measure], filters:[], summary:[]}, config, true);
             return "Ready—startup data reloaded.";
-        } catch (error) {
-            if (!this.startupLoading) {
-                this.appliedFilters = [];
-                this.host.applyJsonFilter(null as unknown as IFilter, "parameterTrial", "filter", powerbi.FilterAction.remove);
-            }
-            throw error;
         } finally { this.startupLoading = false; this.resetFiltersOnRequest = false; }
     };
     private fieldOnlyBinding = false;
@@ -190,7 +256,7 @@ export class FieldParameterTrial {
     private requestConfig?: ParameterConfig;
     private waitingReason = "Power BI has not delivered an updated data view.";
     private appliedFilters: IFilter[] = [];
-    private pending?: { plan: ParameterPlan; filters: IFilter[]; clearing?: boolean; resetAcknowledged?: boolean; restoringSuggestions?: boolean; resolve: (response: QnaResponse) => void; reject: (error: Error) => void };
+    private pending?: { plan: ParameterPlan; filters: IFilter[]; refresh?: boolean; unacknowledgedProjection?: boolean; clearing?: boolean; retainedSelectors?: IFilter[]; resetAcknowledged?: boolean; restoringSuggestions?: boolean; resolve: (response: QnaResponse) => void; reject: (error: Error) => void };
     private timer?: ReturnType<typeof setTimeout>;
     private recoveryTimer?: ReturnType<typeof setTimeout>;
     private recoveredRequest = false;
@@ -204,7 +270,7 @@ export class FieldParameterTrial {
         this.diagnostics.push({ time: new Date().toISOString(), event, ...details });
         if (this.diagnostics.length > 50) this.diagnostics.shift();
     }
-    public cancelQuestion = (): void => { this.modelWork.invalidate(); ++this.questionRevision; this.dataRequestsStopped = true; this.stopSuggestionLoading(); this.cancel(); };
+    public cancelQuestion = (): void => { if (this.pending) this.cancelledSubmission = true; this.modelWork.invalidate(); ++this.questionRevision; this.dataRequestsStopped = true; this.stopSuggestionLoading(); this.cancel(); };
     private transactionContexts:Array<{filters:IFilter[];plan:ParameterPlan}>=[];
     public transactionNavigation = (enter:boolean):void => {
         if(enter){
@@ -215,7 +281,7 @@ export class FieldParameterTrial {
         const previous=this.transactionContexts.pop();if(!previous)return;
         this.cancelQuestion();
         if(JSON.stringify(previous.filters)===JSON.stringify(this.appliedFilters))return;
-        if(!previous.filters.length){this.appliedFilters=[];this.host.applyJsonFilter(null as unknown as IFilter,"parameterTrial","filter",powerbi.FilterAction.remove);return;}
+        if(!previous.filters.length){this.appliedFilters=[];this.applyQueryFilter(null as unknown as IFilter, powerbi.FilterAction.remove);return;}
         // Restore the parent's owned scope through the same acknowledged reset
         // protocol as suggestion loading. Report/page filters are never removed.
         this.pending={plan:previous.plan,filters:previous.filters,restoringSuggestions:true,resolve:()=>{},reject:()=>{}};
@@ -232,7 +298,7 @@ export class FieldParameterTrial {
         if (this.uiStateWrites.size > 8) this.uiStateWrites.delete(this.uiStateWrites.keys().next().value!);
     }
     private queryKey(plan: ParameterPlan, config: ParameterConfig): string {
-        return JSON.stringify({ cashFlowRowLimit:plan.cashFlowRowLimit, groups: [...plan.groups].sort(), measures: [...plan.measures].sort(), filters: parameterFilters(plan, config).map(filterSignature).sort(), schema: config.fields.map(field => ({ name: field.name, table: field.table, column: field.column, type: field.type })) });
+        return JSON.stringify({ agingQuery:plan.agingQuery, cashFlowRowLimit:plan.cashFlowRowLimit, groups: [...plan.groups].sort(), measures: [...plan.measures].sort(), filters: parameterFilters(plan, config).map(filterSignature).sort(), schema: config.fields.map(field => ({ name: field.name, table: field.table, column: field.column, type: field.type })) });
     }
     private rememberQuery(plan: ParameterPlan, config: ParameterConfig, view: powerbi.DataView): void {
         if(plan.cashFlowRowLimit){const table=view.table||categoricalAsTable(view.categorical)||readModelMatrix(view.matrix)?.table;if(table){const truncated=!!view.metadata.segment||(table.rows?.length||0)>plan.cashFlowRowLimit;view={metadata:{...view.metadata,...(truncated?{segment:{}}:{})},table:{...table,rows:(table.rows||[]).slice(0,plan.cashFlowRowLimit)}};}}
@@ -256,6 +322,11 @@ export class FieldParameterTrial {
         this.settingsSnapshot = undefined;
         if (this.hydrated) this.fillOptions(this.readConfig());
     };
+    public validateSettings = (): boolean => {
+        const snapshot=this.settingsSnapshot;
+        if(!this.hydrated&&!this.table.value.trim()&&!this.column.value.trim()&&snapshot&&JSON.stringify(snapshot.values)===JSON.stringify(this.captureSettings().values))return true;
+        try{this.readConfig();return true;}catch(error){this.status.textContent=String((error as Error).message);return false;}
+    };
     public saveSettings = (): boolean => {
         const snapshot = this.settingsSnapshot;
         if (!this.hydrated && !this.table.value.trim() && !this.column.value.trim() && snapshot && JSON.stringify(snapshot.values)===JSON.stringify(this.captureSettings().values)) {
@@ -271,6 +342,7 @@ export class FieldParameterTrial {
             this.status.textContent = "Configuration saved."; return true;
         } catch (error) { this.settingsSnapshot = snapshot; this.status.textContent = String((error as Error).message); return false; }
     };
+    public advancedSettings?: HTMLDetailsElement;
     public mountSettings = (container: HTMLElement): void => { this.cancelSettings(); try { this.refreshTimeFields(this.mappedFields()); } catch { /* Allow invalid setup to be edited. */ } this.settingsSnapshot = this.captureSettings(); this.panel.hidden = false; this.panel.open = true; container.append(this.panel); if(this.detectionToolbar)container.prepend(this.detectionToolbar); this.renderSettingsHealth(); this.refreshSetupCatalog?.(); };
     public settingsHealth = (): string[] => {
         const issues: string[] = [];
@@ -341,7 +413,7 @@ export class FieldParameterTrial {
         this.setupSummary = document.createElement("p"); this.setupSummary.setAttribute("role", "status");
         this.setupSummary.textContent = "Waiting for field-parameter metadata. Add a field parameter to Fields and enable Show selected field in Power BI.";
         this.panel.append(this.setupSummary);
-        const advanced = document.createElement("details"); const advancedTitle = document.createElement("summary"); advancedTitle.textContent = "Advanced setup"; advanced.open = false; advanced.append(advancedTitle);
+        const advanced = document.createElement("details"); this.advancedSettings = advanced; const advancedTitle = document.createElement("summary"); advancedTitle.textContent = "Advanced setup"; advanced.open = false; advanced.append(advancedTitle);
         const help = document.createElement("p"); help.textContent = "Fields are learned as Power BI exposes them. Select all parameter fields once to expose all options. Use overrides for custom parameter labels or metadata Power BI does not expose."; advanced.append(help);
         const input = (text: string, placeholder: string): HTMLInputElement => {
             const label = document.createElement("label"); label.textContent = text;
@@ -378,7 +450,7 @@ export class FieldParameterTrial {
         const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "Reset query filters";
         reset.onclick = () => {
             this.cancel(); this.latest = undefined;
-            this.host.applyJsonFilter(null as unknown as IFilter, "parameterTrial", "filter", powerbi.FilterAction.remove);
+            this.applyQueryFilter(null as unknown as IFilter, powerbi.FilterAction.remove);
             this.status.textContent = "Query filters removed. Report filters still apply.";
         };
         this.status = document.createElement("p"); this.status.setAttribute("role", "status");
@@ -433,14 +505,13 @@ export class FieldParameterTrial {
             this.status.textContent='Measure added to draft. Save settings to apply.';
         },()=>{
             this.cancelQuestion();this.queryCache.clear();this.completed=undefined;this.suggestionFieldsLoaded.clear();this.startupNeeded=false;
-            this.appliedFilters=[];
-            this.host.applyJsonFilter(null as unknown as IFilter,'parameterTrial','filter',1 /* FilterAction.remove; also works in browser bundles */);
+
             if(this.latest)this.discoverSetup(parameterMetadataColumns(this.latest));
             const columns=this.latest?parameterMetadataColumns(this.latest):[];
             const candidates=discoverParameters(columns,true);
             const detected=candidates.find(c=>c.table===this.measureTable.value&&c.column===this.measureColumn.value)||(candidates.length===1?candidates[0]:undefined);
             if(detected){this.measureTable.value=detected.table;this.measureColumn.value=detected.column;this.measureLabels.value=[...new Set([...this.measureLabels.value.split(',').map(v=>v.trim()).filter(Boolean),...detected.options])].join(', ');}
-            this.host.refreshHostData?.();
+            this.applyDefaultField();
             this.renderSettingsHealth();this.status.textContent='Detection refreshed from available Power BI metadata. Save settings to apply. Bind new items in Power BI if they are not listed.';
         },(kind,table,column)=>{
             const candidates=discoverParameters(this.latest?parameterMetadataColumns(this.latest):[],kind==='measure');const selected=candidates.find(c=>c.table===table&&c.column===column);if(!selected)return;
@@ -577,7 +648,7 @@ export class FieldParameterTrial {
             ? { table: this.measureTable.value.trim(), column: this.measureColumn.value.trim(), options: this.measureLabels.value.split(",").map(name => name.trim()).filter(Boolean) } : undefined;
         const time = this.readTimeSetup();
         const hasTimeSetup = Object.values(this.timeSelectors).some(select => !!select.value) || time.numericOrder !== "auto" || time.monthIndexBase !== 1 || time.twoDigitYearStart !== 2000;
-const complete = { ...config, directMeasures: this.directMeasures, answerGroups:this.answerGroups?.(),customKpis:this.customKpis?.(),aging:this.aging?.(), valueSynonyms: this.valueSynonyms?.(), alwaysFilter: this.alwaysFilter?.(), analysis: this.analysis?.(), revenue: this.revenue?.(), ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
+const complete = { ...config, directMeasures: this.directMeasures, answerGroups:this.answerGroups?.(),customKpis:this.customKpis?.(),calculationGroups:this.calculationGroups?.(),aging:this.aging?.(), valueSynonyms: this.valueSynonyms?.(), alwaysFilter: this.alwaysFilter?.(), analysis: this.analysis?.(), revenue: this.revenue?.(), ...(this.additiveMeasures?.().length ? {additiveMeasures: this.additiveMeasures()} : {}), ...(measureParameter ? { measureParameter } : {}), ...(hasTimeSetup ? { time } : {}), ...(!this.fieldOnlyBinding && this.defaultMeasure?.() ? {defaultMeasure: this.defaultMeasure()} : {}) };
         validateParameterConfig(complete); return complete;
     }
 
@@ -630,7 +701,7 @@ const complete = { ...config, directMeasures: this.directMeasures, answerGroups:
                     return filterSignature({target:basic.target}) === filterSignature({target:{table:measure.table,column:measure.column}}) && basic.operator === "In" && basic.values?.length === 0;
                 })) {
                     this.recoveredEmptyMeasureFilter = true;
-                    this.host.applyJsonFilter(null as unknown as IFilter, "parameterTrial", "filter", powerbi.FilterAction.remove);
+                    this.applyQueryFilter(null as unknown as IFilter, powerbi.FilterAction.remove);
                 }
             } catch { /* Invalid saved configuration is handled below. */ }
         }
@@ -653,6 +724,23 @@ const complete = { ...config, directMeasures: this.directMeasures, answerGroups:
     }
 
     private modelWork = new ModelWorkQueue();
+    async previewCalculations(groups: import("./calculationGroups").CalculationGroup[], question: string): Promise<QnaResponse> {
+        if (!this.automaticEnabled()) throw new Error("Formula preview requires configured model queries.");
+
+        const config = this.readConfig();
+        const legacy = (config.customKpis || []).filter(k => !k.calculation);
+        validateCalculationGroups(groups, [...this.nativeMeasures, ...legacy.map(k => k.name)], config.fields.map(f => f.name));
+        config.calculationGroups = groups;
+        config.customKpis = [...legacy, ...calculationKpis(groups)];
+        const measures = [...this.nativeMeasures, ...config.customKpis.filter(k => k.enabled).map(k => k.name)];
+        compileKpis(config.customKpis, this.nativeMeasures);
+        const revision = ++this.questionRevision;
+        this.cancel();
+        const result = await this.request(planParameterQuestion(question, config, measures), config, true);
+        if (revision !== this.questionRevision) throw new Error("Preview cancelled.");
+        return result;
+    }
+
     prepareQuestion(question: string, refresh = false): Promise<QnaResponse | undefined> {
         let summary = false;
         if (question.startsWith(';transactions:')) {
@@ -723,6 +811,13 @@ const complete = { ...config, directMeasures: this.directMeasures, answerGroups:
             config = { ...config, revenuePercentage: true, additiveMeasures: [] }; question = revenue.question;
         }
         question = normalizeMonthPeriods(question, config.time, [...this.measures, ...config.fields.flatMap(field => [field.name, ...(field.aliases || []), ...(field.type !== "date" ? field.values || [] : [])])]);
+        const timeAnswer = /\b(?:ytd|ttm|year to date|trailing 12 months|running total|cumulative total)\b/i.test(question) ? await answerTimeWindow(question, config, this.measures, async plan => {
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            const result = await this.request(plan, config, refresh);
+            if (revision !== this.questionRevision) throw new Error("Query cancelled.");
+            return result;
+        }) : undefined;
+        if (timeAnswer) return timeAnswer;
         const months = "January|February|March|April|May|June|July|August|September|October|November|December";
         const comparison = new RegExp(`\\b((?:${months})\\s+\\d{4})\\s+(?:vs\\.?|versus)\\s+((?:${months})\\s+\\d{4})\\b`, "i").exec(question);
         const periodWord = /\b(ttm|trailing 12 months|ytd|year to date)\b/i.exec(question);
@@ -966,9 +1061,16 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         this.cancel(); this.requestConfig = config; const filters = parameterFilters(plan, config);
         const cached = !refresh && this.queryCache.get(this.queryKey(plan, config));
         if (cached) { this.rememberQuery(plan, config, cached); this.trace("query-cache-hit", { groups: plan.groups }); return Promise.resolve(this.answer(cached, plan)); }
-        const parameterTarget = filterSignature({ target: { table: config.table, column: config.column } });
-        const priorPredicates = this.appliedFilters.filter(filter => filterSignature({ target: filter.target }) !== parameterTarget);
-        const needsReset = this.resetFiltersOnRequest || priorPredicates.length > 0 && JSON.stringify(priorPredicates.map(filterSignature).sort()) !== JSON.stringify(filters.filter(filter => filterSignature({ target: filter.target }) !== parameterTarget).map(filterSignature).sort());
+        // Both parameter selectors are replaced by the incoming request. Comparing
+        // a measure selector as a model predicate would briefly clear the field selection.
+        const selectorTargets = new Set([config, config.measureParameter].flatMap(parameter =>
+            parameter ? [filterSignature({target: {table: parameter.table, column: parameter.column}})] : []));
+        const modelPredicates = (items: IFilter[]) => items
+            .filter(filter => !selectorTargets.has(filterSignature({target: filter.target})))
+            .map(filterSignature).sort();
+        const previousPredicates = modelPredicates(this.appliedFilters);
+        const needsReset = this.resetFiltersOnRequest || (previousPredicates.length > 0 &&
+            JSON.stringify(previousPredicates) !== JSON.stringify(modelPredicates(filters)));
         const setupError = this.parameterLabelError(this.latest, config);
         if (setupError) { this.status.textContent = setupError; return Promise.reject(new Error(setupError)); }
         const matchesCurrent = this.matches(this.latest, plan, filters);
@@ -979,7 +1081,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         this.waitingReason = "Power BI has not delivered an updated data view.";
         this.status.textContent = `Loading ${plan.groups.join(" + ")}${plan.summary.length ? " • " + plan.summary.join("; ") : ""}…`;
         return new Promise((resolve, reject) => {
-            this.pending = { plan, filters, resolve, reject }; this.recoveredRequest = false;
+            this.pending = { plan, filters, refresh, resolve, reject }; this.recoveredRequest = false;
             this.timer = setTimeout(() => this.fail(`Power BI did not return matching complete data within 60 seconds. ${this.waitingReason} Check askBICS's query in Performance Analyzer and keep Show selected field enabled. No answer was calculated.`), 60000);
             try {
                 if (needsReset) {
@@ -994,16 +1096,20 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const fixedField = config.fields.find(field => config.options.includes(field.name) && plan.filters.some(filter => {
             const basic = filter as any;
             return basic.target?.table === field.table && basic.target?.column === field.column &&
-                basic.operator === "In" && basic.values?.length === 1;
+                ((basic.operator === "In" && basic.values?.length === 1) ||
+                 (basic.conditions?.length === 1 && basic.conditions[0].operator === "Is"));
         }));
-        const anchor = fixedField?.name || config.options[0];
+        // Aging totals must stay on the aging table, not an unrelated first retail field.
+        const agingAnchor=plan.agingQuery&&config.fields.some(f=>f.name===plan.agingDateField)&&config.options.includes(plan.agingDateField||'')?plan.agingDateField:undefined;
+        if(plan.agingQuery&&!agingAnchor)throw new Error('Add the aging date field to the field parameter before running aging.');
+        const anchor = agingAnchor || fixedField?.name || config.options[0];
         if (!anchor) throw new Error("Keep at least one grouping field available in Data setup.");
         const response = await this.requestBase({...plan, groups: [anchor], totalOnly: false, presentation: "table", rank: undefined}, config, refresh);
         const table = response.table;
         if (!table) throw new Error("Power BI did not return the grouped measure data.");
         // A fixed revenue member is evaluated directly in its requested context.
         // Otherwise use only host aggregate metadata, never sums of grouped cells.
-        const fixedRow = fixedField && table.rows.length === 1 ? 0 : undefined;
+        const fixedRow = fixedField?.name === anchor && table.rows.length === 1 ? 0 : undefined;
         const raw = plan.measures.map((measure, i) => {
             const column = table.columns.indexOf(measure);
             return fixedRow !== undefined ? table.modelRawRows?.[fixedRow]?.[column] ?? null : table.modelRawTotals?.[column] ?? null;
@@ -1012,6 +1118,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const values = raw.map((value, index) => value === null ? "—" : formatPowerBiValue(value, formats[index]));
         return {text: response.text, modelQuery: true, table: {
             columns: plan.measures, rows: [values], rowIndices: [[]], modelRawRows: [raw],
+            modelResultComplete: table.modelResultComplete,
             modelTotals: values, modelRawTotals: raw, modelFormats: formats,
             modelEvaluatedTotals: plan.measures.map(measure => fixedRow !== undefined || !!table.modelEvaluatedTotals?.[table.columns.indexOf(measure)])
         }};
@@ -1021,6 +1128,22 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const pending = this.pending;
         if (!pending) return;
         pending.clearing = true;
+        const config = this.requestConfig;
+        const targets = config ? [config, config.measureParameter].filter(Boolean).map(c => filterSignature({target:{table:c!.table,column:c!.column}})) : [];
+        const selectors = this.appliedFilters.filter(f => targets.includes(filterSignature({target:f.target})));
+        const nextSelectors = pending.filters.filter(f => targets.includes(filterSignature({target:f.target})));
+        const predicates = this.appliedFilters.filter(f => !targets.includes(filterSignature({target:f.target})));
+        // Remove only model predicates when the requested projection is unchanged.
+        // Never expose the unfiltered field parameter between aging bands.
+        pending.retainedSelectors = pending.plan.agingQuery && predicates.length && selectors.length && JSON.stringify(selectors.map(filterSignature).sort()) === JSON.stringify(nextSelectors.map(filterSignature).sort()) ? selectors : undefined;
+        if (pending.refresh && nextSelectors.length) {
+            if (!predicates.length || !selectors.length) {
+                pending.clearing = false;
+                this.sendPending();
+                return;
+            }
+            pending.retainedSelectors = selectors;
+        }
         this.waitingReason = "Waiting for Power BI to clear the previous question filters.";
         this.onProgress?.("Waiting for Power BI to reset question filters…");
         this.trace("clear-owned-filters");
@@ -1030,35 +1153,43 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         this.recoveryTimer = setTimeout(() => {
             if (this.pending !== pending || !pending.clearing) return;
             this.trace("refresh-clear-acknowledgement");
-            try { this.host.refreshHostData(); }
+            try {
+                if (pending.refresh && pending.retainedSelectors?.length) {
+                    this.applyQueryFilter(pending.retainedSelectors, powerbi.FilterAction.merge);
+                } else this.host.refreshHostData();
+            }
             catch (error) { this.fail("Could not refresh the cleared query: " + String(error)); }
         }, 4000);
-        this.host.applyJsonFilter(null as unknown as IFilter, "parameterTrial", "filter", powerbi.FilterAction.remove);
+        this.applyQueryFilter(pending.retainedSelectors ? predicates : null as unknown as IFilter, powerbi.FilterAction.remove);
     }
 
-    private sendPending(): void {
+    private sendPending(forceMerge = false): void {
         const pending = this.pending;
         if (!pending) return;
         this.onProgress?.("Waiting for Power BI…");
         const unchanged = JSON.stringify(pending.filters.map(filterSignature)) === JSON.stringify(this.appliedFilters.map(filterSignature));
+        const refreshHost = unchanged && !forceMerge && !this.cancelledSubmission;
+        this.cancelledSubmission = false;
         this.appliedFilters = pending.filters;
         this.submittedRevision = this.dataRevision;
-        this.trace(unchanged ? "refresh-host" : "apply-filters", { predicates: pending.filters.length, targets: pending.filters.map(filter => filter.target) });
+        pending.unacknowledgedProjection = false;
+        const selectorTargets = [this.requestConfig, this.requestConfig?.measureParameter].filter(Boolean)
+            .map(c => filterSignature({target: {table: c!.table, column: c!.column}}));
+        const selectors = pending.filters.filter(filter => selectorTargets.includes(filterSignature({target: filter.target})));
+        this.trace(refreshHost ? "refresh-host" : "apply-filters", { predicates: pending.filters.length, targets: pending.filters.map(filter => filter.target), selectors });
         if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
         const submitted = this.dataRevision;
         if (!this.recoveredRequest) this.recoveryTimer = setTimeout(() => {
-            if (this.pending !== pending || pending.clearing || this.dataRevision !== submitted) return;
+            if (this.pending !== pending || pending.clearing || this.recoveredRequest) return;
+            if (this.dataRevision !== submitted && !pending.unacknowledgedProjection) return;
             this.recoveredRequest = true;
-            // Retry once only when the host delivered no Data event at all.
-            // Clear acknowledgement must arrive before the filter is reapplied.
-            pending.clearing = true;
             this.confirmedView = undefined;
-            this.trace("recover-no-host-response", { targets: pending.filters.map(filter => filter.target) });
-            try { this.clearPendingFilters(); }
+            this.trace("retry-parameter-selection", { selectors, reason: this.waitingReason });
+            try { this.sendPending(true); }
             catch (error) { this.fail("Could not retry the query: " + String(error)); }
-        }, 4000);
-        if (unchanged) this.host.refreshHostData();
-        else this.host.applyJsonFilter(pending.filters, "parameterTrial", "filter", powerbi.FilterAction.merge);
+        }, pending.plan.agingQuery ? 15000 : 4000);
+        if (refreshHost) this.host.refreshHostData();
+        else this.applyQueryFilter(pending.filters, powerbi.FilterAction.merge);
     }
 
     update(dataView?: powerbi.DataView, jsonFilters?: powerbi.IFilter[], isDataUpdate = true): void {
@@ -1090,6 +1221,9 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         this.lastDataSignature = signature;
         ++this.dataRevision;
         this.latest = dataView;
+        if (this.awaitingDefaultField && (this.pending || sameGrouping(
+            (table?.columns || []).filter(column => !column.isMeasure && !column.roles?.measures).map(column => column.displayName),
+            [this.awaitingDefaultField]))) this.awaitingDefaultField = undefined;
 
         this.trace("host-shape", { tableColumns: dataView.table?.columns.map(c => ({ name: c.displayName, roles: c.roles, isMeasure: c.isMeasure })), matrixLevels: dataView.matrix?.rows.levels.map(level => level.sources.map(c => c.displayName)), matrixMeasures: dataView.matrix?.valueSources.map(c => c.displayName), metadataColumns: dataView.metadata.columns?.map(c => ({ name: c.displayName, queryName:c.queryName, target:resolveFilterTarget(c), type:c.type, roles: c.roles, isMeasure: c.isMeasure, parameters: c.sourceFieldParameters?.map(p => ({name:p.displayName,target:p.expr?resolveFilterTarget({displayName:p.displayName,expr:p.expr}):undefined})) })) });
         this.trace("data-view", { columns: table?.columns.map(column => column.displayName), rows: table?.rows?.length, segmented: !!dataView.metadata.segment, pending: !!this.pending });
@@ -1160,7 +1294,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         // the public update carries the model-column predicates. Neither is a
         // complete replacement for the other. Preserve conflicts: matches()
         // must reject a stale predicate rather than silently picking one copy.
-        const ownedJson = ownedList.filter(filter => !!filter?.target);
+        const ownedJson = ownedList.filter(filter => !!filter?.target && (!this.calculationFilter || filterSignature(filter) !== filterSignature(this.calculationFilter)));
         // general.filter is the outgoing selection (selfFilter: false), not
         // an acknowledgement of this visual's parameterTrial self-filter.
         const outgoing = dataView.metadata.objects?.general?.filter as unknown;
@@ -1176,7 +1310,8 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         if (this.pending?.clearing) {
             // Wait for the host's cleared state; never merge into the same
             // turn as remove, and never interpret this intermediate data as an answer.
-            const oldTargets = this.appliedFilters.map(filter => filterSignature({ target: filter.target }));
+            const retained = new Set((this.pending.retainedSelectors || []).map(filterSignature));
+            const oldTargets = this.appliedFilters.filter(filter => !retained.has(filterSignature(filter))).map(filter => filterSignature({ target: filter.target }));
             if (this.latestFilters.some(filter => oldTargets.includes(filterSignature({ target: (filter as IFilter).target })))) {
                 this.waitingReason = "Waiting for Power BI to clear the previous question filters.";
                 return;
@@ -1184,12 +1319,12 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             this.trace("owned-filters-cleared");
             this.pending.clearing = false;
             this.pending.resetAcknowledged = true;
-            this.appliedFilters = [];
+            this.appliedFilters = this.pending.retainedSelectors || [];
             try { this.sendPending(); } catch (error) { this.fail(`Could not request model data: ${String(error)}`); }
             return;
         }
         // Restore only filters owned by this visual, never report/page filters.
-        if (!this.pending && !this.appliedFilters.length && ownedList.length && ownedList.every(filter => !!filter?.target)) this.appliedFilters = ownedList;
+        if (!this.pending && !this.appliedFilters.length && ownedList.length && ownedList.every(filter => !!filter?.target)) { this.appliedFilters = ownedJson; this.submittedQueryFilters = ownedJson; }
         if (this.pending && this.requestConfig) {
             const setupError = this.parameterLabelError(dataView, this.requestConfig);
             if (setupError) { this.fail(setupError); return; }
@@ -1212,6 +1347,10 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
                 resolve(answer);
             } catch (error) { this.fail(String((error as Error).message)); }
         } else if (this.pending) {
+            const deliveredGroups = (table?.columns || []).filter(c => !c.roles?.measures && !c.isMeasure).map(c => c.displayName);
+            this.pending.unacknowledgedProjection = !!table && !dataView.metadata.segment &&
+                !sameGrouping(deliveredGroups, this.pending.plan.groups) &&
+                !this.latestFilters.some(filter => this.pending!.filters.some(expected => filterSignature(expected) === filterSignature(filter)));
             this.onProgress?.("Waiting for Power BI. " + this.waitingReason);
             this.trace("waiting", { reason: this.waitingReason });
             this.status.textContent = `Waiting for Power BI. ${this.waitingReason}`;
@@ -1347,7 +1486,7 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
         const text = `${plan.listOnly ? "List of " : plan.measures.join(", ") + " by "}${plan.groups.join(" and ")}.${plan.summary.length ? " Filtered by: " + plan.summary.join("; ") + "." : ""}${rows.length ? "" : " No matching data."}`;
         const result: QnaResponse = { text, modelQuery: true, table: { columns: names, rows, rowIndices: rows.map(() => []) } };
         result.table!.modelResultComplete = !dataView.metadata.segment && (!plan.cashFlowRowLimit || (sourceTable.rows?.length||0)<=plan.cashFlowRowLimit);
-        if (plan.transactionRuleProbe || plan.transactionRuleData) result.table!.modelGroupValues = (table.rows || []).map(row=>indices.slice(0,plan.groups.length).map(index=>row[index] == null ? null : row[index] instanceof Date ? (row[index] as Date).toISOString() : row[index] as string | number | boolean));
+        if (plan.agingQuery || plan.transactionRuleProbe || plan.transactionRuleData) result.table!.modelGroupValues = (table.rows || []).map(row=>indices.slice(0,plan.groups.length).map(index=>row[index] == null ? null : row[index] instanceof Date ? (row[index] as Date).toISOString() : row[index] as string | number | boolean));
         result.table!.modelRawRows = (table.rows || []).map(row=>indices.map(index=>typeof row[index] === "number" ? Number(row[index]) : null));
         if (plan.cashFlowData) {
             result.table!.modelGroupValues = (table.rows || []).map(row=>indices.slice(0,plan.groups.length).map(index=>row[index] == null ? null : row[index] instanceof Date ? (row[index] as Date).toISOString() : row[index] as string | number | boolean));
@@ -1367,8 +1506,10 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
             const mapped = this.requestConfig?.fields.find(field => field.name === name);
             const target = resolved?.column || resolved?.hierarchyLevel ? resolved : mapped ? { table: mapped.table, column: mapped.column } : undefined;
             const value = row[indices[position]];
-            return target?.table && (target.column || target.hierarchyLevel) && ["string", "number", "boolean"].includes(typeof value)
-                ? [{ ...target, value: value as string | number | boolean }] : [];
+            // Preserve model blanks as null (Power BI filter runtime supports null despite its primitive typings).
+            // Dropping a blank part would discard the whole row scope and disable transactions/summaries.
+            return target?.table && (target.column || target.hierarchyLevel) && (value == null || ["string", "number", "boolean"].includes(typeof value))
+                ? [{ ...target, value: (value == null ? null : value) as string | number | boolean }] : [];
         }));
         result.table!.modelSelections = result.table!.modelSelections.map(selection => selection.length === plan.groups.length ? selection : []);
         result.table!.modelRowSelections = result.table!.modelSelections.map(selection => this.selectionWithContext(selection, plan));
@@ -1474,3 +1615,6 @@ response.chart = {type:basePlan.presentation || "column",title:`${basePlan.measu
     }
     destroy(): void { this.modelWork.invalidate(); this.stopSuggestionLoading(); this.cancel(); this.panel.remove(); }
 }
+
+
+

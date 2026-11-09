@@ -21,6 +21,7 @@ function applyRule(plan:ParameterPlan,config:ParameterConfig,rule:AlwaysFilterRu
         }
         if(f.target?.table!==field.table||f.target?.column!==field.column)return true;
         if(f.operator==='In'&&Array.isArray(f.values))values=values.filter(v=>f.values.includes(v));
+        else if(f.operator==='NotIn'&&Array.isArray(f.values))values=values.filter(v=>!f.values.includes(v));
         else if(Array.isArray(f.conditions)) values=values.filter(v=>{
             const checks=f.conditions.map((c:any)=>{switch(c.operator){case 'Is':return v===c.value;case 'IsNot':return v!==c.value;case 'GreaterThanOrEqual':return v>=c.value;case 'LessThan':return v<c.value;case 'GreaterThan':return v>c.value;case 'LessThanOrEqual':return v<=c.value;default:throw new Error('Unsupported filter on the Always filter field.');}});
             return f.logicalOperator==='Or'?checks.some(Boolean):checks.every(Boolean);
